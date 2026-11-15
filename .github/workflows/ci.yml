@@ -76,20 +76,23 @@ jobs:
             fi
 
             author_email="$(git show -s --format='%ae' "$sha")"
+            author="$(git show -s --format='%an <%ae>' "$sha")"
+
             if printf '%s\n' "$author_email" | grep -qiE "^($AGENT_SIGNOFF_EMAILS)$"; then
-              if ! printf '%s\n' "$signoffs" | grep -qiE "^Signed-off-by: ${HUMAN_IDENTITY}$"; then
+              human_signoffs="$(printf '%s\n' "$signoffs" | grep -viE "<($AGENT_SIGNOFF_EMAILS)>" | grep -iE "^Signed-off-by: ${HUMAN_IDENTITY}$" || true)"
+              if [ -z "$human_signoffs" ]; then
                 echo "::error::$(git show -s --format='%h %s' "$sha") is agent-authored and lacks a human Signed-off-by."
                 missing=1
               fi
               continue
             fi
 
-            if printf '%s\n' "$author_email" | grep -qiE '\[bot\]@users\.noreply\.github\.com$'; then
+            if printf '%s\n' "$author" | grep -qiE '\[bot\]'; then
               continue
             fi
 
-            if ! printf '%s\n' "$signoffs" | grep -qiE "^Signed-off-by: ${HUMAN_IDENTITY}$"; then
-              echo "::error::$(git show -s --format='%h %s' "$sha") is missing a Signed-off-by line."
+            if ! printf '%s\n' "$signoffs" | grep -qiF "Signed-off-by: ${author}"; then
+              echo "::error::$(git show -s --format='%h %s' "$sha") lacks a Signed-off-by matching the author."
               missing=1
             fi
           done < <(git rev-list --reverse "${BASE_SHA}..${HEAD_SHA}")

@@ -21,8 +21,9 @@ When skills or plugins disagree, resolve in this order:
    disambiguate agent-facing English (tool descriptions, error messages, inter-agent
    instructions). Do not rewrite ordinary PR prose into STE by default.
 4. **Vendored pstack skills** under `.agents/skills/` (`tdd`, `typescript-best-practices`,
-   `principle-*`, `unslop`) — opt-in slash/workflows. Encode the durable principles below
-   in this file so quality does not depend on invoking them.
+   `principle-type-system-discipline`, `principle-boundary-discipline`, other `principle-*`,
+   `unslop`) — opt-in slash/workflows. Encode the durable principles below in this file so
+   quality does not depend on invoking them.
 5. **pstack Cursor plugin** (`.cursor/settings.json`) — `/poteto-mode` and the rest of the
    plugin surface. Plugin-only; not required for non-Cursor harnesses.
 

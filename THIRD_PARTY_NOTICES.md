@@ -29,6 +29,8 @@ patterns) at the same commit. Licensed Apache-2.0.
 - **Paths:**
   - `.agents/skills/tdd/`
   - `.agents/skills/typescript-best-practices/`
+  - `.agents/skills/principle-type-system-discipline/`
+  - `.agents/skills/principle-boundary-discipline/`
   - `.agents/skills/principle-prove-it-works/`
   - `.agents/skills/principle-subtract-before-you-add/`
   - `.agents/skills/principle-laziness-protocol/`
