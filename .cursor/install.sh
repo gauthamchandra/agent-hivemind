@@ -10,6 +10,8 @@
 set -euo pipefail
 
 BUN_VERSION="1.3.4"
+BUN_BIN="/usr/local/bin/bun"
+BUNX_BIN="/usr/local/bin/bunx"
 
 if [ "$(id -u)" -eq 0 ]; then
   SUDO=""
@@ -25,8 +27,8 @@ verify_sha256() {
 }
 
 install_bun() {
-  if command -v bun >/dev/null 2>&1 && [ "$(bun --version)" = "${BUN_VERSION}" ]; then
-    echo "bun ${BUN_VERSION} already installed"
+  if [ -x "${BUN_BIN}" ] && [ "$("${BUN_BIN}" --version)" = "${BUN_VERSION}" ]; then
+    echo "bun ${BUN_VERSION} already installed at ${BUN_BIN}"
     return
   fi
 
@@ -45,19 +47,22 @@ install_bun() {
   verify_sha256 "${tmp}/${asset}" "${sha}"
   unzip -oq "${tmp}/${asset}" -d "${tmp}"
 
-  ${SUDO} install -m 0755 "${tmp}/${asset%.zip}/bun" /usr/local/bin/bun
-  ${SUDO} ln -sf /usr/local/bin/bun /usr/local/bin/bunx
+  ${SUDO} install -m 0755 "${tmp}/${asset%.zip}/bun" "${BUN_BIN}"
+  ${SUDO} ln -sf "${BUN_BIN}" "${BUNX_BIN}"
   rm -rf "${tmp}"
 }
 
 install_bun
 
+# Prefer the pinned binary over any earlier Bun on PATH.
+export PATH="/usr/local/bin:${PATH}"
+
 log "Installing project dependencies"
 if [ -f bun.lock ]; then
-  bun install --frozen-lockfile
+  "${BUN_BIN}" install --frozen-lockfile
 else
-  bun install
+  "${BUN_BIN}" install
 fi
 
 log "Toolchain ready"
-bun --version
+"${BUN_BIN}" --version

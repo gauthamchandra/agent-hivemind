@@ -5,7 +5,7 @@
     "": {
       "name": "agent-hivemind",
       "devDependencies": {
-        "@biomejs/biome": "^2.4.6",
+        "@biomejs/biome": "2.6.8",
         "@commitlint/cli": "^20.0.0",
         "@commitlint/config-conventional": "^20.0.0",
         "@types/bun": "latest",
