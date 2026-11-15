@@ -1,0 +1,4 @@
+{
+  "name": "agent-hivemind",
+  "install": "./.cursor/install.sh"
+}
