@@ -87,7 +87,9 @@ jobs:
               continue
             fi
 
-            if printf '%s\n' "$author" | grep -qiE '\[bot\]'; then
+            # Only skip GitHub App bots (noreply addresses). A display name that
+            # merely contains "[bot]" still needs a matching human Signed-off-by.
+            if printf '%s\n' "$author_email" | grep -qiE '\[bot\]@users\.noreply\.github\.com$'; then
               continue
             fi
 
