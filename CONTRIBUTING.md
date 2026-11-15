@@ -72,5 +72,7 @@ CI rejects `Signed-off-by` lines that carry coding-agent identities.
 - The **pstack** Cursor plugin is enabled in [`.cursor/settings.json`](.cursor/settings.json)
   for `/poteto-mode` and related workflows. A curated, self-contained subset is also vendored
   under `.agents/skills/` for non-Cursor harnesses.
+- Claude Code shared permissions live in [`.claude/settings.json`](.claude/settings.json).
+  Personal overrides go in `.claude/settings.local.json` (gitignored).
 - Default writing skill: `write-for-humans`. Use `asd-ste100` only for agent-facing English
   that must not be ambiguous. See skill precedence in `AGENTS.md`.
