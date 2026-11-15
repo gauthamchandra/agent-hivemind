@@ -111,3 +111,8 @@ dist
 
 # TernJS port file
 .tern-port
+
+# Agent / Claude Code local overrides (shared allowlist is .claude/settings.json)
+.context/
+.claude/settings.local.json
+

@@ -1,0 +1,28 @@
+[test]
+coverage = true
+coverageReporter = ["text", "lcov"]
+coverageDir = "./coverage"
+
+coverageExclude = [
+  "**/*.test.ts",
+]
+
+include = [
+  "src/**/*.test.ts",
+]
+
+[install]
+frozenLockfile = false
+cache = true
+
+[build]
+minify = false
+sourcemap = "external"
+
+exclude = [
+  "**/*.test.ts",
+  "**/*.test.js",
+  "coverage/",
+  "docs/",
+  "*.md"
+]

@@ -1,0 +1,4 @@
+# Check only — do not rewrite files here. A write-then-commit path leaves
+# formatter fixes unstaged and can push a tree that fails CI format:check.
+bun run format:check
+bun run lint
