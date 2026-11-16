@@ -1,9 +1,3 @@
-CREATE TABLE migrations (
-  id text PRIMARY KEY,
-  applied_at timestamptz NOT NULL,
-  oldest_program_version text NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE workspaces (
   id text PRIMARY KEY,
   name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 60),
