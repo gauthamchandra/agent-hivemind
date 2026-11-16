@@ -38,6 +38,6 @@
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*", "scripts/**/*.ts"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "coverage"]
 }

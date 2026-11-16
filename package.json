@@ -10,8 +10,8 @@
     "dev": "bun run --watch src/index.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",
-    "lint": "bunx tsc --noEmit && bunx biome check --error-on-warnings . && bun scripts/check-layers.ts",
-    "lint:fix": "bunx tsc --noEmit && bunx biome check --write --error-on-warnings . && bun scripts/check-layers.ts",
+    "lint": "bunx tsc --noEmit && bunx biome check --error-on-warnings .",
+    "lint:fix": "bunx tsc --noEmit && bunx biome check --write --error-on-warnings .",
     "format": "bunx biome format --write .",
     "format:check": "bunx biome format .",
     "prepare": "husky"

@@ -24,6 +24,13 @@
     "lineWidth": 100,
     "lineEnding": "lf"
   },
+  "plugins": [
+    {
+      "path": "./biome/no-platform-name.grit",
+      "includes": ["src/core/**"],
+      "resolutionKind": "config"
+    }
+  ],
   "linter": {
     "enabled": true,
     "rules": {
@@ -45,7 +52,9 @@
         "noInferrableTypes": "off",
         "useConsistentObjectDefinitions": {
           "level": "error",
-          "options": { "syntax": "shorthand" }
+          "options": {
+            "syntax": "shorthand"
+          }
         }
       }
     }
@@ -70,6 +79,484 @@
     }
   },
   "overrides": [
+    {
+      "includes": ["src/domain/**", "!src/domain/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/policy",
+                      "**/policy/**",
+                      "**/ports",
+                      "**/ports/**",
+                      "**/core",
+                      "**/core/**",
+                      "**/storage",
+                      "**/storage/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "**/notify",
+                      "**/notify/**",
+                      "**/identity",
+                      "**/identity/**",
+                      "**/http",
+                      "**/http/**",
+                      "**/console",
+                      "**/console/**",
+                      "**/cli",
+                      "**/cli/**",
+                      "**/conformance",
+                      "**/conformance/**"
+                    ],
+                    "message": "This layer cannot import that layer."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/policy/**", "!src/policy/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/ports",
+                      "**/ports/**",
+                      "**/core",
+                      "**/core/**",
+                      "**/storage",
+                      "**/storage/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "**/notify",
+                      "**/notify/**",
+                      "**/identity",
+                      "**/identity/**",
+                      "**/http",
+                      "**/http/**",
+                      "**/console",
+                      "**/console/**",
+                      "**/cli",
+                      "**/cli/**",
+                      "**/conformance",
+                      "**/conformance/**"
+                    ],
+                    "message": "This layer cannot import that layer."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/ports/**", "!src/ports/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/policy",
+                      "**/policy/**",
+                      "**/core",
+                      "**/core/**",
+                      "**/storage",
+                      "**/storage/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "**/notify",
+                      "**/notify/**",
+                      "**/identity",
+                      "**/identity/**",
+                      "**/http",
+                      "**/http/**",
+                      "**/console",
+                      "**/console/**",
+                      "**/cli",
+                      "**/cli/**",
+                      "**/conformance",
+                      "**/conformance/**"
+                    ],
+                    "message": "This layer cannot import that layer."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/core/**", "!src/core/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/storage",
+                      "**/storage/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "**/notify",
+                      "**/notify/**",
+                      "**/identity",
+                      "**/identity/**",
+                      "**/http",
+                      "**/http/**",
+                      "**/console",
+                      "**/console/**",
+                      "**/cli",
+                      "**/cli/**",
+                      "**/conformance",
+                      "**/conformance/**"
+                    ],
+                    "message": "This layer cannot import that layer."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/storage/**", "!src/storage/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/policy",
+                      "**/policy/**",
+                      "**/core",
+                      "**/core/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "**/notify",
+                      "**/notify/**",
+                      "**/identity",
+                      "**/identity/**",
+                      "**/http",
+                      "**/http/**",
+                      "**/console",
+                      "**/console/**",
+                      "**/cli",
+                      "**/cli/**",
+                      "**/conformance",
+                      "**/conformance/**"
+                    ],
+                    "message": "This layer cannot import that layer."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/platform/**", "!src/platform/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/policy",
+                      "**/policy/**",
+                      "**/core",
+                      "**/core/**",
+                      "**/storage",
+                      "**/storage/**",
+                      "**/notify",
+                      "**/notify/**",
+                      "**/identity",
+                      "**/identity/**",
+                      "**/http",
+                      "**/http/**",
+                      "**/console",
+                      "**/console/**",
+                      "**/cli",
+                      "**/cli/**",
+                      "**/conformance",
+                      "**/conformance/**"
+                    ],
+                    "message": "This layer cannot import that layer."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/notify/**", "!src/notify/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/policy",
+                      "**/policy/**",
+                      "**/core",
+                      "**/core/**",
+                      "**/storage",
+                      "**/storage/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "**/identity",
+                      "**/identity/**",
+                      "**/http",
+                      "**/http/**",
+                      "**/console",
+                      "**/console/**",
+                      "**/cli",
+                      "**/cli/**",
+                      "**/conformance",
+                      "**/conformance/**"
+                    ],
+                    "message": "This layer cannot import that layer."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/identity/**", "!src/identity/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/policy",
+                      "**/policy/**",
+                      "**/core",
+                      "**/core/**",
+                      "**/storage",
+                      "**/storage/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "**/notify",
+                      "**/notify/**",
+                      "**/http",
+                      "**/http/**",
+                      "**/console",
+                      "**/console/**",
+                      "**/cli",
+                      "**/cli/**",
+                      "**/conformance",
+                      "**/conformance/**"
+                    ],
+                    "message": "This layer cannot import that layer."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/http/**", "!src/http/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/policy",
+                      "**/policy/**",
+                      "**/storage",
+                      "**/storage/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "**/notify",
+                      "**/notify/**",
+                      "**/identity",
+                      "**/identity/**",
+                      "**/console",
+                      "**/console/**",
+                      "**/cli",
+                      "**/cli/**",
+                      "**/conformance",
+                      "**/conformance/**"
+                    ],
+                    "message": "This layer cannot import that layer."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/console/**", "!src/console/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/domain",
+                      "**/domain/**",
+                      "**/policy",
+                      "**/policy/**",
+                      "**/ports",
+                      "**/ports/**",
+                      "**/core",
+                      "**/core/**",
+                      "**/storage",
+                      "**/storage/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "**/notify",
+                      "**/notify/**",
+                      "**/identity",
+                      "**/identity/**",
+                      "**/http",
+                      "**/http/**",
+                      "**/cli",
+                      "**/cli/**",
+                      "**/conformance",
+                      "**/conformance/**"
+                    ],
+                    "message": "This layer cannot import that layer."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/cli/**", "!src/cli/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/policy",
+                      "**/policy/**",
+                      "**/ports",
+                      "**/ports/**",
+                      "**/core",
+                      "**/core/**",
+                      "**/storage",
+                      "**/storage/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "**/notify",
+                      "**/notify/**",
+                      "**/identity",
+                      "**/identity/**",
+                      "**/http",
+                      "**/http/**",
+                      "**/console",
+                      "**/console/**",
+                      "**/conformance",
+                      "**/conformance/**"
+                    ],
+                    "message": "This layer cannot import that layer."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/conformance/**", "!src/conformance/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/policy",
+                      "**/policy/**",
+                      "**/core",
+                      "**/core/**",
+                      "**/storage",
+                      "**/storage/**",
+                      "**/platform",
+                      "**/platform/**",
+                      "**/notify",
+                      "**/notify/**",
+                      "**/identity",
+                      "**/identity/**",
+                      "**/http",
+                      "**/http/**",
+                      "**/console",
+                      "**/console/**",
+                      "**/cli",
+                      "**/cli/**"
+                    ],
+                    "message": "This layer cannot import that layer."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "includes": ["**/*.test.ts", "**/*.spec.ts"],
       "linter": {
