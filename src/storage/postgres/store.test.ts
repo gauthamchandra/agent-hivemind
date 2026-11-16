@@ -21,7 +21,7 @@ import type { ErrorCode } from '@/domain/errors.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { GroupId, TaskId } from '@/domain/ids.ts';
 import { createIds, defaultWorkspaceId } from '@/domain/ids.ts';
-import type { EvidenceEntry, TaskState, VerificationMode } from '@/domain/model.ts';
+import type { EvidenceEntry, Group, TaskState, VerificationMode } from '@/domain/model.ts';
 import { selfHostedGroupCaps } from '@/domain/model.ts';
 import { manualClock } from '@/ports/clock.ts';
 import type { RandomSource } from '@/ports/random.ts';
@@ -708,6 +708,155 @@ describe('postgres store', () => {
     }
 
     expect(rewriteFailed).toBe(true);
+    await db.close();
+  });
+
+  test('the root closes when it enters implementing after every child is done', async () => {
+    const { db, deps } = await migrateEmpty();
+    const opened = await openInstallation(deps);
+    const secret = opened.bootstrapSecret;
+    if (secret === null) throw new Error('expected a bootstrap secret');
+
+    const admin = await createFirstAdministrator(deps, {
+      bootstrapSecret: secret,
+      displayName: 'Ada',
+    });
+    const workspaceId = opened.workspace.id;
+    const planner = deps.ids.session();
+    const implementer = deps.ids.session();
+    const reviewer = deps.ids.session();
+    const verifier = deps.ids.session();
+    const created = await createGroup(deps, {
+      workspaceId,
+      personId: admin.id,
+      name: 'Late root',
+      goal: 'Finish the children before the root leaves analysis.',
+      budget: '10',
+      connectionId: deps.ids.connection(),
+      verificationMode: 'before_merge',
+      notes: [],
+    });
+    const analyzed = await reportTransition(deps, {
+      workspaceId,
+      groupId: created.group.id,
+      taskId: created.root.id,
+      expectedVersion: created.root.version,
+      actor: { kind: 'session', role: 'planner', sessionId: planner, live: true },
+      to: 'analyzing',
+      note,
+      evidence: [],
+      nextVerificationMode: null,
+    });
+    let child = (
+      await createChildTask(deps, {
+        workspaceId,
+        groupId: created.group.id,
+        actor: { role: 'planner', sessionId: planner, live: true },
+        title: 'Finish first',
+        description: 'Complete this child while the root is still analyzing.',
+        verificationMode: null,
+        dependsOn: [],
+      })
+    ).task;
+    const steps: {
+      role: 'implementer' | 'reviewer' | 'verifier';
+      to: TaskState;
+      evidence: EvidenceEntry[];
+    }[] = [
+      { role: 'implementer', to: 'implementing', evidence: [] },
+      { role: 'implementer', to: 'in_review', evidence: address },
+      { role: 'reviewer', to: 'approved', evidence: address },
+      { role: 'reviewer', to: 'verifying_before_merge', evidence: [] },
+      { role: 'verifier', to: 'merging', evidence: description },
+      { role: 'reviewer', to: 'done', evidence: address },
+    ];
+    const sessions = { implementer, reviewer, verifier };
+
+    for (const step of steps) {
+      child = (
+        await reportTransition(deps, {
+          workspaceId,
+          groupId: created.group.id,
+          taskId: child.id,
+          expectedVersion: child.version,
+          actor: { kind: 'session', role: step.role, sessionId: sessions[step.role], live: true },
+          to: step.to,
+          note,
+          evidence: step.evidence,
+          nextVerificationMode: null,
+        })
+      ).task;
+    }
+
+    const rootBefore = (await deps.store.tasks(workspaceId, created.group.id)).find(
+      task => task.parent_id === null
+    );
+    expect(rootBefore?.state).toBe('analyzing');
+    expect((await deps.store.group(workspaceId, created.group.id))?.status).toBe('open');
+
+    const moved = await reportTransition(deps, {
+      workspaceId,
+      groupId: created.group.id,
+      taskId: created.root.id,
+      expectedVersion: rootBefore?.version ?? analyzed.task.version,
+      actor: { kind: 'session', role: 'planner', sessionId: planner, live: true },
+      to: 'implementing',
+      note,
+      evidence: [],
+      nextVerificationMode: null,
+    });
+    const root = (await deps.store.tasks(workspaceId, created.group.id)).find(
+      task => task.parent_id === null
+    );
+
+    expect(moved.task.state).toBe('done');
+    expect(root?.state).toBe('done');
+    expect((await deps.store.group(workspaceId, created.group.id))?.status).toBe('closed');
+    await db.close();
+  });
+
+  test('saved platform settings come back on read', async () => {
+    const { db, deps } = await migrateEmpty();
+    const opened = await openInstallation(deps);
+    const secret = opened.bootstrapSecret;
+    if (secret === null) throw new Error('expected a bootstrap secret');
+
+    const admin = await createFirstAdministrator(deps, {
+      bootstrapSecret: secret,
+      displayName: 'Ada',
+    });
+    const group: Group = {
+      id: deps.ids.group(),
+      workspace_id: opened.workspace.id,
+      name: 'Settings group',
+      goal: 'Keep the platform settings.',
+      owner_person_id: admin.id,
+      default_verification_mode: 'before_merge',
+      connection_id: deps.ids.connection(),
+      budget: '10',
+      spend: '0',
+      caps: selfHostedGroupCaps,
+      session_settings: {
+        model_tier: 'strong',
+        repositories: ['acme/app'],
+        platform_settings: { memory: true, organization: 'acme' },
+        role_tiers: { planner: 'strong' },
+      },
+      context_fingerprint: fingerprintText(''),
+      features: [],
+      initiator: null,
+      status: 'open',
+      created_at: '2026-11-16T00:00:00.000Z',
+      closed_at: null,
+    };
+
+    await deps.store.transact(async tx => {
+      await tx.insertGroup(group);
+    });
+
+    const read = await deps.store.group(opened.workspace.id, group.id);
+
+    expect(read?.session_settings).toEqual(group.session_settings);
     await db.close();
   });
 });

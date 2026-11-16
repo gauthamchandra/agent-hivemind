@@ -665,7 +665,7 @@ function parseSettings(value: unknown): SessionSettings {
   return {
     model_tier: typeof value.model_tier === 'string' ? value.model_tier : null,
     repositories: readStringList(value.repositories),
-    platform_settings: {},
+    platform_settings: readScalarRecord(value.platform_settings),
     role_tiers: roleTiers,
   };
 }
@@ -685,6 +685,10 @@ function parseEvidence(value: unknown): EvidenceEntry[] {
 }
 
 function parseData(value: unknown): Readonly<Record<string, string | number | boolean | null>> {
+  return readScalarRecord(value);
+}
+
+function readScalarRecord(value: unknown): Record<string, string | number | boolean | null> {
   if (!isRecord(value)) throw unreadable();
 
   const data: Record<string, string | number | boolean | null> = {};
@@ -697,7 +701,10 @@ function parseData(value: unknown): Readonly<Record<string, string | number | bo
       item === null
     ) {
       data[key] = item;
+      continue;
     }
+
+    throw unreadable();
   }
 
   return data;

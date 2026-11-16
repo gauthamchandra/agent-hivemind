@@ -251,8 +251,14 @@ export async function reportTransition(
       nextVerificationMode: input.nextVerificationMode,
     });
 
-    if (task.parent_id !== null && isClosedState(applied.task.state)) {
+    const childClosed = task.parent_id !== null && isClosedState(applied.task.state);
+    const rootEnteredImplementing =
+      task.parent_id === null && applied.task.state === 'implementing';
+
+    if (childClosed || rootEnteredImplementing) {
       const closed = await closeRootWhenChildrenDone(deps, tx, applied.group);
+
+      if (rootEnteredImplementing) return closed;
 
       return { task: applied.task, group: closed.group };
     }
