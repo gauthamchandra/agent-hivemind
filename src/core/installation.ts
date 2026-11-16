@@ -58,8 +58,10 @@ export async function createFirstAdministrator(
       throw new HivemindError('conflict', 'The workspace already has a person.');
     }
 
-    if (input.displayName.length > 200) {
-      throw new HivemindError('validation_failed', 'The display name is too long.', {
+    const displayName = input.displayName.trim();
+
+    if (displayName.length === 0 || displayName.length > 200) {
+      throw new HivemindError('validation_failed', 'A person needs a display name.', {
         field: 'display_name',
       });
     }
@@ -67,7 +69,7 @@ export async function createFirstAdministrator(
     const person: Person = {
       id: deps.ids.person(),
       workspace_id: defaultWorkspaceId,
-      display_name: input.displayName,
+      display_name: displayName,
       workspace_role: 'administrator',
       account_id: null,
       status: 'active',

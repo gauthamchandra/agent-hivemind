@@ -17,7 +17,7 @@ CREATE TABLE accounts (
 CREATE TABLE people (
   id text PRIMARY KEY,
   workspace_id text NOT NULL REFERENCES workspaces (id),
-  display_name text NOT NULL,
+  display_name text NOT NULL CHECK (char_length(btrim(display_name)) BETWEEN 1 AND 200),
   workspace_role text NOT NULL CHECK (workspace_role IN ('member', 'administrator')),
   account_id text REFERENCES accounts (id),
   status text NOT NULL CHECK (status IN ('active', 'disabled')),

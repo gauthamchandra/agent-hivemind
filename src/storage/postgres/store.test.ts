@@ -231,6 +231,44 @@ describe('postgres store', () => {
     await db.close();
   });
 
+  test('a person needs a display name a reader can see', async () => {
+    const db = new PGlite();
+    await db.waitReady;
+    const deps = depsFor(db, 7, '2026-11-16T00:00:00.000Z', bootstrapRandom());
+    await deps.store.migrate();
+    const opened = await openInstallation(deps);
+    const secret = opened.bootstrapSecret;
+    if (secret === null) throw new Error('expected a bootstrap secret');
+
+    const blank = await expectCode(
+      createFirstAdministrator(deps, { bootstrapSecret: secret, displayName: ' \n\t ' }),
+      'validation_failed'
+    );
+    const empty = await expectCode(
+      createFirstAdministrator(deps, { bootstrapSecret: secret, displayName: '' }),
+      'validation_failed'
+    );
+    const tooLong = await expectCode(
+      createFirstAdministrator(deps, {
+        bootstrapSecret: secret,
+        displayName: ` ${'A'.repeat(201)} `,
+      }),
+      'validation_failed'
+    );
+
+    expect(blank.details.field).toBe('display_name');
+    expect(empty.details.field).toBe('display_name');
+    expect(tooLong.details.field).toBe('display_name');
+
+    const person = await createFirstAdministrator(deps, {
+      bootstrapSecret: secret,
+      displayName: `  ${'A'.repeat(200)}  `,
+    });
+
+    expect(person.display_name).toBe('A'.repeat(200));
+    await db.close();
+  });
+
   test('the bootstrap key stops working 24 hours after it is created', async () => {
     const db = new PGlite();
     await db.waitReady;
