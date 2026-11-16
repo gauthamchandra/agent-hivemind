@@ -8,6 +8,11 @@ const biome = fileURLToPath(new URL('../../node_modules/.bin/biome', import.meta
 const forbiddenImport = new URL('../core/forbidden-import.fixture.ts', import.meta.url);
 const platformName = new URL('../core/platform-name.fixture.ts', import.meta.url);
 const groupTitle = new URL('../storage/postgres/group-title.fixture.ts', import.meta.url);
+const downMigration = new URL('../storage/postgres/down-migration.fixture.ts', import.meta.url);
+const forwardMigration = new URL(
+  '../storage/postgres/forward-migration.fixture.ts',
+  import.meta.url
+);
 
 async function check(path: URL): Promise<{ code: number; output: string }> {
   const proc = Bun.spawn([biome, 'check', '--error-on-warnings', fileURLToPath(path)], {
@@ -54,6 +59,42 @@ describe('biome layer rules', () => {
         unlink(forbiddenImport).catch(() => undefined),
         unlink(platformName).catch(() => undefined),
         unlink(groupTitle).catch(() => undefined),
+      ]);
+    }
+  });
+
+  test('a down or rollback call fails, and an up call does not', async () => {
+    await Bun.write(
+      downMigration,
+      `export async function undo(migrator: {
+  down(options?: { to?: 0 }): Promise<void>;
+  rollback(): Promise<void>;
+}): Promise<void> {
+  await migrator.down();
+  await migrator.rollback();
+}
+`
+    );
+    await Bun.write(
+      forwardMigration,
+      `export async function apply(migrator: { up(): Promise<void> }): Promise<void> {
+  await migrator.up();
+}
+`
+    );
+
+    try {
+      const reversed = await check(downMigration);
+      const forward = await check(forwardMigration);
+
+      expect(reversed.code).not.toBe(0);
+      expect(reversed.output.match(/Migrations are forward only/g)?.length).toBe(2);
+      expect(forward.code).toBe(0);
+      expect(forward.output).not.toContain('Migrations are forward only');
+    } finally {
+      await Promise.all([
+        unlink(downMigration).catch(() => undefined),
+        unlink(forwardMigration).catch(() => undefined),
       ]);
     }
   });

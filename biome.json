@@ -29,6 +29,11 @@
       "path": "./biome/no-platform-name.grit",
       "includes": ["src/core/**"],
       "resolutionKind": "config"
+    },
+    {
+      "path": "./biome/no-down-migration.grit",
+      "includes": ["src/**"],
+      "resolutionKind": "config"
     }
   ],
   "linter": {

@@ -1,7 +1,4 @@
-import { fileURLToPath } from 'node:url';
 import type { PGlite, Transaction } from '@electric-sql/pglite';
-import { drizzle } from 'drizzle-orm/pglite';
-import { migrate as migrateSql } from 'drizzle-orm/pglite/migrator';
 import { canonicalizeDecimal } from '@/domain/decimal.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import {
@@ -35,8 +32,7 @@ import {
 } from '@/domain/model.ts';
 import { readTime } from '@/domain/time.ts';
 import type { Store, UnitOfWork } from '@/ports/storage.ts';
-
-const migrationsFolder = fileURLToPath(new URL('./migrations/', import.meta.url));
+import { applyMigrations, executePglite } from '@/storage/postgres/migrate.ts';
 
 type Sql = {
   query<T>(text: string, params?: unknown[]): Promise<{ rows: T[] }>;
@@ -49,7 +45,7 @@ export function openPgliteStore(db: PGlite): Store {
   return {
     async migrate() {
       await db.waitReady;
-      await migrateSql(drizzle(db), { migrationsFolder });
+      await applyMigrations(executePglite(db));
     },
 
     transact(work) {
