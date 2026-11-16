@@ -4,7 +4,6 @@ import type {
   GroupId,
   OperatorKeyId,
   PersonId,
-  SessionId,
   TaskId,
   WorkspaceId,
 } from '@/domain/ids.ts';
@@ -214,9 +213,4 @@ export type TaskEvent = {
   note: string | null;
   data: Readonly<Record<string, string | number | boolean | null>>;
   at: string;
-};
-
-export type ActorRef = {
-  kind: 'session' | 'person' | 'service';
-  id: SessionId | PersonId | 'hivemind-svc';
 };

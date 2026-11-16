@@ -246,6 +246,45 @@ describe('postgres store', () => {
     await db.close();
   });
 
+  test('an expired unused bootstrap key does not block a new one', async () => {
+    const db = new PGlite();
+    await db.waitReady;
+    let draw = 0;
+    const deps = depsFor(db, 3, '2026-11-16T00:00:00.000Z', {
+      bytes(length) {
+        draw += 1;
+
+        return new Uint8Array(length).fill(draw);
+      },
+    });
+    await deps.store.migrate();
+    const opened = await openInstallation(deps);
+    const first = opened.bootstrapSecret;
+    if (first === null) throw new Error('expected a bootstrap secret');
+
+    deps.clock.advance(dayMs);
+
+    const again = await openInstallation(deps);
+    const second = again.bootstrapSecret;
+    if (second === null) throw new Error('expected a replacement bootstrap secret');
+
+    expect(second).not.toBe(first);
+    await expectCode(
+      createFirstAdministrator(deps, { bootstrapSecret: first, displayName: 'Ada' }),
+      'unauthenticated'
+    );
+
+    const person = await createFirstAdministrator(deps, {
+      bootstrapSecret: second,
+      displayName: 'Ada',
+    });
+    const quiet = await openInstallation(deps);
+
+    expect(person.display_name).toBe('Ada');
+    expect(quiet.bootstrapSecret).toBeNull();
+    await db.close();
+  });
+
   test('a group walks every permitted path, and a closed task stays closed', async () => {
     const { db, deps } = await migrateEmpty();
     const opened = await openInstallation(deps);

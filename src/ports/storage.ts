@@ -19,7 +19,7 @@ export type ChildCounts = {
 export interface UnitOfWork {
   countWorkspaces(): Promise<number>;
   countPeople(): Promise<number>;
-  countOperatorKeys(): Promise<number>;
+  hasUsableOperatorKey(now: string): Promise<boolean>;
   insertWorkspace(workspace: Workspace): Promise<void>;
   workspace(id: WorkspaceId): Promise<Workspace | null>;
   insertPerson(person: Person): Promise<void>;

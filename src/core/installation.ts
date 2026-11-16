@@ -15,18 +15,19 @@ export type Installation = {
 };
 
 /**
- * Open an empty database. The first call creates the default workspace and a bootstrap
- * key. The secret is returned once, for the caller to show, and is not written again.
+ * Open the database. The first call on an empty store creates the default workspace
+ * and a bootstrap key, and returns that secret once. A later open mints a replacement
+ * only when every existing key is expired or revoked and no person exists yet.
  */
 export async function openInstallation(deps: ServiceDeps): Promise<Installation> {
   return deps.store.transact(async tx => {
     const workspace = await ensureWorkspace(deps, tx);
-    const people = await tx.countPeople();
-    const keys = await tx.countOperatorKeys();
+    const now = formatTime(deps.clock.now());
 
-    if (people > 0 || keys > 0) return { workspace, bootstrapSecret: null };
+    if ((await tx.countPeople()) > 0 || (await tx.hasUsableOperatorKey(now))) {
+      return { workspace, bootstrapSecret: null };
+    }
 
-    const now = deps.clock.now();
     const secret = operatorKeySecret(deps.random);
     const record: OperatorKeyRecord = {
       id: deps.ids.operatorKey(),
@@ -35,8 +36,8 @@ export async function openInstallation(deps: ServiceDeps): Promise<Installation>
       role: 'bootstrap',
       key_hash: sha256Hex(secret),
       person_id: null,
-      created_at: formatTime(now),
-      expires_at: formatTime(new Date(now.getTime() + bootstrapTtlMs)),
+      created_at: now,
+      expires_at: formatTime(new Date(deps.clock.now().getTime() + bootstrapTtlMs)),
       revoked_at: null,
     };
 

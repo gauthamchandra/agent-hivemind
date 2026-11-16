@@ -110,8 +110,18 @@ function unitOfWork(sql: Sql): UnitOfWork {
     async countPeople() {
       return readCount(sql, 'SELECT count(*)::int AS count FROM people');
     },
-    async countOperatorKeys() {
-      return readCount(sql, 'SELECT count(*)::int AS count FROM operator_keys');
+    async hasUsableOperatorKey(now) {
+      const row = await one(
+        sql,
+        `SELECT 1 AS present
+         FROM operator_keys
+         WHERE revoked_at IS NULL
+           AND (expires_at IS NULL OR expires_at > $1::timestamptz)
+         LIMIT 1`,
+        [now]
+      );
+
+      return row !== null;
     },
     async insertWorkspace(workspace) {
       await run(
