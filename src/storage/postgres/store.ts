@@ -1,6 +1,7 @@
-import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import type { PGlite, Transaction } from '@electric-sql/pglite';
+import { drizzle } from 'drizzle-orm/pglite';
+import { migrate as migrateSql } from 'drizzle-orm/pglite/migrator';
 import { canonicalizeDecimal } from '@/domain/decimal.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import {
@@ -35,7 +36,7 @@ import {
 import { readTime } from '@/domain/time.ts';
 import type { Store, UnitOfWork } from '@/ports/storage.ts';
 
-const oldestProgramVersion = '0.0.1';
+const migrationsFolder = fileURLToPath(new URL('./migrations/', import.meta.url));
 
 type Sql = {
   query<T>(text: string, params?: unknown[]): Promise<{ rows: T[] }>;
@@ -48,23 +49,7 @@ export function openPgliteStore(db: PGlite): Store {
   return {
     async migrate() {
       await db.waitReady;
-      const applied = await appliedIds(db);
-      const directory = fileURLToPath(new URL('./migrations/', import.meta.url));
-      const files = (await readdir(directory)).filter(name => name.endsWith('.sql')).sort();
-
-      for (const name of files) {
-        if (applied.has(name)) continue;
-
-        const sql = await readFile(`${directory}/${name}`, 'utf8');
-
-        await db.transaction(async tx => {
-          await tx.exec(sql);
-          await tx.query(
-            `INSERT INTO migrations (id, applied_at, oldest_program_version) VALUES ($1, now(), $2)`,
-            [name, oldestProgramVersion]
-          );
-        });
-      }
+      await migrateSql(drizzle(db), { migrationsFolder });
     },
 
     transact(work) {
@@ -436,22 +421,6 @@ async function readEvents(sql: Sql, workspaceId: string, groupId: string): Promi
   );
 
   return rows.map(parseEvent);
-}
-
-async function appliedIds(db: PGlite): Promise<Set<string>> {
-  const found = await db.query<{ present: boolean | string }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM information_schema.tables
-       WHERE table_schema = 'public' AND table_name = 'migrations'
-     ) AS present`
-  );
-  const present = found.rows[0]?.present;
-
-  if (present !== true && present !== 't') return new Set();
-
-  const rows = await db.query<{ id: string }>('SELECT id FROM migrations');
-
-  return new Set(rows.rows.map(row => row.id));
 }
 
 async function run(sql: Sql, text: string, params: unknown[]): Promise<void> {

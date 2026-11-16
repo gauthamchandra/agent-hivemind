@@ -3,7 +3,7 @@ CREATE TABLE migrations (
   applied_at timestamptz NOT NULL,
   oldest_program_version text NOT NULL
 );
-
+--> statement-breakpoint
 CREATE TABLE workspaces (
   id text PRIMARY KEY,
   name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 60),
@@ -11,7 +11,7 @@ CREATE TABLE workspaces (
   limits jsonb NOT NULL,
   created_at timestamptz NOT NULL
 );
-
+--> statement-breakpoint
 CREATE TABLE accounts (
   id text PRIMARY KEY,
   issuer text NOT NULL,
@@ -19,7 +19,7 @@ CREATE TABLE accounts (
   created_at timestamptz NOT NULL,
   UNIQUE (issuer, subject)
 );
-
+--> statement-breakpoint
 CREATE TABLE people (
   id text PRIMARY KEY,
   workspace_id text NOT NULL REFERENCES workspaces (id),
@@ -31,7 +31,7 @@ CREATE TABLE people (
   UNIQUE (workspace_id, id),
   UNIQUE (workspace_id, account_id)
 );
-
+--> statement-breakpoint
 CREATE TABLE operator_keys (
   id text PRIMARY KEY,
   workspace_id text NOT NULL REFERENCES workspaces (id),
@@ -49,7 +49,7 @@ CREATE TABLE operator_keys (
     OR (role <> 'bootstrap' AND person_id IS NOT NULL)
   )
 );
-
+--> statement-breakpoint
 CREATE TABLE groups (
   id text PRIMARY KEY,
   workspace_id text NOT NULL REFERENCES workspaces (id),
@@ -74,7 +74,7 @@ CREATE TABLE groups (
   FOREIGN KEY (workspace_id, owner_person_id) REFERENCES people (workspace_id, id),
   CHECK (budget >= spend)
 );
-
+--> statement-breakpoint
 CREATE TABLE context_notes (
   workspace_id text NOT NULL,
   group_id text NOT NULL,
@@ -84,7 +84,7 @@ CREATE TABLE context_notes (
   PRIMARY KEY (group_id, position),
   FOREIGN KEY (workspace_id, group_id) REFERENCES groups (workspace_id, id)
 );
-
+--> statement-breakpoint
 CREATE TABLE tasks (
   id text PRIMARY KEY,
   workspace_id text NOT NULL,
@@ -121,9 +121,9 @@ CREATE TABLE tasks (
   FOREIGN KEY (workspace_id, group_id) REFERENCES groups (workspace_id, id),
   FOREIGN KEY (workspace_id, parent_id) REFERENCES tasks (workspace_id, id)
 );
-
+--> statement-breakpoint
 CREATE UNIQUE INDEX tasks_one_root ON tasks (group_id) WHERE parent_id IS NULL;
-
+--> statement-breakpoint
 CREATE TABLE task_events (
   id text PRIMARY KEY,
   workspace_id text NOT NULL,
@@ -145,19 +145,19 @@ CREATE TABLE task_events (
   FOREIGN KEY (workspace_id, task_id) REFERENCES tasks (workspace_id, id),
   FOREIGN KEY (workspace_id, group_id) REFERENCES groups (workspace_id, id)
 );
-
+--> statement-breakpoint
 CREATE FUNCTION task_events_reject_change() RETURNS trigger
 LANGUAGE plpgsql AS $fn$
 BEGIN
   RAISE EXCEPTION 'task events are append-only';
 END;
 $fn$;
-
+--> statement-breakpoint
 CREATE TRIGGER task_events_append_only
   BEFORE UPDATE OR DELETE ON task_events
   FOR EACH ROW
   EXECUTE FUNCTION task_events_reject_change();
-
+--> statement-breakpoint
 CREATE FUNCTION tasks_reject_closed_change() RETURNS trigger
 LANGUAGE plpgsql AS $fn$
 BEGIN
@@ -170,7 +170,7 @@ BEGIN
   RETURN NEW;
 END;
 $fn$;
-
+--> statement-breakpoint
 CREATE TRIGGER tasks_closed_state
   BEFORE UPDATE ON tasks
   FOR EACH ROW

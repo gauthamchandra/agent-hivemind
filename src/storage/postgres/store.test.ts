@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import type { ReportActor, ServiceDeps } from '@/core/deps.ts';
@@ -151,12 +151,21 @@ describe('postgres store', () => {
 
     await deps.store.migrate();
 
-    const applied = await db.query<{ id: string }>(`SELECT id FROM migrations ORDER BY id`);
+    const applied = await db.query<{ hash: string }>(
+      `SELECT hash FROM drizzle.__drizzle_migrations ORDER BY created_at, id`
+    );
+    const hashes: string[] = [];
+
+    for (const name of files) {
+      const sql = await readFile(`${directory}/${name}`, 'utf8');
+      hashes.push(createHash('sha256').update(sql).digest('hex'));
+    }
+
     const workspaces = await db.query<{ count: number }>(
       `SELECT count(*)::int AS count FROM workspaces`
     );
 
-    expect(applied.rows.map(row => row.id)).toEqual(files);
+    expect(applied.rows.map(row => row.hash)).toEqual(hashes);
     expect(workspaces.rows[0]?.count).toBe(0);
     await db.close();
   });
