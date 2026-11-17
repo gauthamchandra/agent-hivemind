@@ -2,6 +2,7 @@ import type { PGlite, Transaction } from '@electric-sql/pglite';
 import { canonicalizeDecimal } from '@/domain/decimal.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import {
+  requireChangesetId,
   requireConnectionId,
   requireEventId,
   requireGroupId,
@@ -33,43 +34,100 @@ import {
 import { readTime } from '@/domain/time.ts';
 import type { Store, UnitOfWork } from '@/ports/storage.ts';
 import { applyMigrations, executePglite } from '@/storage/postgres/migrate.ts';
+import {
+  readOccupancy,
+  readSession,
+  readSessions,
+  sessionUnit,
+} from '@/storage/postgres/session-store.ts';
 
-type Sql = {
+export type Sql = {
+  query<T>(text: string, params?: unknown[]): Promise<{ rows: T[] }>;
+  exec(text: string): Promise<unknown>;
+};
+
+export type SqlDatabase = {
+  transaction<T>(work: (sql: Sql) => Promise<T>): Promise<T>;
   query<T>(text: string, params?: unknown[]): Promise<{ rows: T[] }>;
   exec(text: string): Promise<unknown>;
 };
 
 type Row = Record<string, unknown>;
 
-export function openPgliteStore(db: PGlite): Store {
+export function openSqlStore(db: SqlDatabase, migrate: () => Promise<void>): Store {
+  const root: Sql = { query: db.query.bind(db), exec: db.exec.bind(db) };
+
   return {
-    async migrate() {
-      await db.waitReady;
-      await applyMigrations(executePglite(db));
-    },
+    migrate,
 
     transact(work) {
-      return db.transaction(tx => work(unitOfWork(queries(tx))));
+      return db.transaction(tx => work(unitOfWork(tx)));
     },
 
     async group(workspaceId, groupId) {
-      const row = await one(
-        queries(db),
-        'SELECT * FROM groups WHERE workspace_id = $1 AND id = $2',
-        [workspaceId, groupId]
-      );
+      const row = await one(root, 'SELECT * FROM groups WHERE workspace_id = $1 AND id = $2', [
+        workspaceId,
+        groupId,
+      ]);
 
       return row === null ? null : parseGroup(row);
     },
 
     tasks(workspaceId, groupId) {
-      return readTasks(queries(db), workspaceId, groupId);
+      return readTasks(root, workspaceId, groupId);
     },
 
     events(workspaceId, groupId) {
-      return readEvents(queries(db), workspaceId, groupId);
+      return readEvents(root, workspaceId, groupId);
+    },
+
+    sessions(workspaceId, groupId) {
+      return readSessions(root, workspaceId, groupId);
+    },
+
+    session(workspaceId, id) {
+      return readSession(root, workspaceId, id);
+    },
+
+    occupancy(workspaceId, groupId) {
+      return readOccupancy(root, workspaceId, groupId);
+    },
+
+    spawnCount(groupId, since) {
+      return sessionUnit(root).spawnCount(groupId, since);
+    },
+
+    async connection(workspaceId) {
+      const row = await one(root, 'SELECT id FROM connections WHERE workspace_id = $1', [
+        workspaceId,
+      ]);
+
+      return row === null ? null : requireConnectionId(readString(row, 'id'));
+    },
+
+    async saveConnection(row) {
+      await run(
+        root,
+        `INSERT INTO connections (workspace_id, id, adapter, created_at)
+         VALUES ($1, $2, $3, $4::timestamptz)`,
+        [row.workspaceId, row.id, row.adapter, row.createdAt]
+      );
     },
   };
+}
+
+export function openPgliteStore(database: PGlite): Store {
+  return openSqlStore(
+    {
+      transaction: work => database.transaction(tx => work(queries(tx))),
+      query: (text, params) => database.query(text, params),
+      exec: text => database.exec(text),
+    },
+    async () => {
+      await database.waitReady;
+      await applyMigrations(executePglite(database));
+    }
+  );
 }
 
 function queries(db: PGlite | Transaction): Sql {
@@ -85,6 +143,7 @@ function queries(db: PGlite | Transaction): Sql {
 
 function unitOfWork(sql: Sql): UnitOfWork {
   return {
+    ...sessionUnit(sql),
     async countWorkspaces() {
       return readCount(sql, 'SELECT count(*)::int AS count FROM workspaces');
     },
@@ -242,9 +301,12 @@ function unitOfWork(sql: Sql): UnitOfWork {
       await run(sql, taskWrite('UPDATE'), [
         task.workspace_id,
         task.id,
+        task.title,
+        task.description,
         task.state,
         task.state_entered_at,
         task.verification_mode,
+        task.changeset_id,
         task.changeset_round,
         task.closed_at,
         task.version,
@@ -302,6 +364,11 @@ function unitOfWork(sql: Sql): UnitOfWork {
 
       return readNumber(row ?? {}, 'next');
     },
+    async lockWorkspace(id) {
+      const row = await one(sql, 'SELECT * FROM workspaces WHERE id = $1 FOR UPDATE', [id]);
+
+      return row === null ? null : parseWorkspace(row);
+    },
     async insertEvent(event) {
       await run(
         sql,
@@ -345,12 +412,15 @@ function taskWrite(kind: 'INSERT' | 'UPDATE'): string {
   }
 
   return `UPDATE tasks SET
-    state = $3,
-    state_entered_at = $4::timestamptz,
-    verification_mode = $5,
-    changeset_round = $6,
-    closed_at = $7::timestamptz,
-    version = $8
+    title = $3,
+    description = $4,
+    state = $5,
+    state_entered_at = $6::timestamptz,
+    verification_mode = $7,
+    changeset_id = $8,
+    changeset_round = $9,
+    closed_at = $10::timestamptz,
+    version = $11
   WHERE workspace_id = $1 AND id = $2`;
 }
 
@@ -543,7 +613,7 @@ function parseTask(row: Row): Task {
     state,
     state_entered_at: readTime(row.state_entered_at),
     verification_mode: mode,
-    changeset_id: null,
+    changeset_id: readChangeset(row),
     depends_on: readStringList(readJson(row, 'depends_on')).map(requireTaskId),
     changeset_round: readNumber(row, 'changeset_round'),
     respawns_used: readNumber(row, 'respawns_used'),
@@ -553,6 +623,12 @@ function parseTask(row: Row): Task {
     closed_at: readNullableTime(row.closed_at),
     version: readNumber(row, 'version'),
   };
+}
+
+function readChangeset(row: Row): Task['changeset_id'] {
+  const value = readNullableString(row, 'changeset_id');
+
+  return value === null ? null : requireChangesetId(value);
 }
 
 function parseEvent(row: Row): TaskEvent {
@@ -565,7 +641,11 @@ function parseEvent(row: Row): TaskEvent {
     kind !== 'created' &&
     kind !== 'transition' &&
     kind !== 'verification_mode_changed' &&
-    kind !== 'owner_instruction'
+    kind !== 'owner_instruction' &&
+    kind !== 'note' &&
+    kind !== 'session_started' &&
+    kind !== 'session_start_failed' &&
+    kind !== 'session_ended'
   ) {
     throw unreadable();
   }

@@ -9,6 +9,8 @@ export type ServiceDeps = {
   clock: Clock;
   random: RandomSource;
   ids: IdFactory;
+  /** Encrypts replayed responses. It comes from configuration and is not stored. */
+  responseKey: string;
 };
 
 export type ReportActor =

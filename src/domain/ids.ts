@@ -11,6 +11,7 @@ export type PersonId = string & { readonly __brand: 'PersonId' };
 export type OperatorKeyId = string & { readonly __brand: 'OperatorKeyId' };
 export type ConnectionId = string & { readonly __brand: 'ConnectionId' };
 export type SessionId = string & { readonly __brand: 'SessionId' };
+export type ChangesetId = string & { readonly __brand: 'ChangesetId' };
 
 export type IdClock = { now(): Date };
 export type IdRandom = { bytes(length: number): Uint8Array };
@@ -24,6 +25,7 @@ export type IdFactory = {
   operatorKey(): OperatorKeyId;
   connection(): ConnectionId;
   session(): SessionId;
+  changeset(): ChangesetId;
 };
 
 const patterns = {
@@ -35,6 +37,7 @@ const patterns = {
   operatorKey: new RegExp(`^opk_${body}$`),
   connection: new RegExp(`^con_${body}$`),
   session: new RegExp(`^ses_${body}$`),
+  changeset: new RegExp(`^chg_${body}$`),
 } as const;
 
 export function isWorkspaceId(value: string): value is WorkspaceId {
@@ -69,6 +72,10 @@ export function isSessionId(value: string): value is SessionId {
   return patterns.session.test(value);
 }
 
+export function isChangesetId(value: string): value is ChangesetId {
+  return patterns.changeset.test(value);
+}
+
 export function requireWorkspaceId(value: string): WorkspaceId {
   return brand(value, isWorkspaceId, 'workspace');
 }
@@ -99,6 +106,10 @@ export function requireConnectionId(value: string): ConnectionId {
 
 export function requireSessionId(value: string): SessionId {
   return brand(value, isSessionId, 'session');
+}
+
+export function requireChangesetId(value: string): ChangesetId {
+  return brand(value, isChangesetId, 'changeset');
 }
 
 /** The self-hosted installation's first workspace. The identifier is fixed by the specification. */
@@ -150,6 +161,7 @@ export function createIds(clock: IdClock, random: IdRandom): IdFactory {
     operatorKey: () => requireOperatorKeyId(mint('opk_')),
     connection: () => requireConnectionId(mint('con_')),
     session: () => requireSessionId(mint('ses_')),
+    changeset: () => requireChangesetId(mint('chg_')),
   };
 }
 

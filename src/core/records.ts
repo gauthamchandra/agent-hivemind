@@ -2,18 +2,21 @@ import type { ReportActor, ServiceDeps } from '@/core/deps.ts';
 import { requireContextNotes } from '@/domain/context.ts';
 import { compareDecimal, requirePositiveDecimal } from '@/domain/decimal.ts';
 import { HivemindError } from '@/domain/errors.ts';
-import type {
-  ConnectionId,
-  GroupId,
-  PersonId,
-  SessionId,
-  TaskId,
-  WorkspaceId,
+import {
+  type ConnectionId,
+  type GroupId,
+  type PersonId,
+  requireGroupId,
+  requireTaskId,
+  type SessionId,
+  type TaskId,
+  type WorkspaceId,
 } from '@/domain/ids.ts';
 import type {
   EvidenceEntry,
   Group,
   Person,
+  SessionRecord,
   Task,
   TaskEvent,
   TaskState,
@@ -24,11 +27,19 @@ import { formatTime } from '@/domain/time.ts';
 import type { TransitionActor } from '@/domain/transitions.ts';
 import { decideTransition } from '@/domain/transitions.ts';
 import { evaluatePolicy } from '@/policy/policy.ts';
-import type { UnitOfWork } from '@/ports/storage.ts';
+import type { IdempotencyRecord, UnitOfWork } from '@/ports/storage.ts';
 
 const serviceId = 'hivemind-svc';
 
-type StoredActor = { kind: 'session' | 'person' | 'service'; id: string };
+export type StoredActor = { kind: 'session' | 'person' | 'service'; id: string };
+
+type IdempotencyInput = {
+  key: string;
+  bodyHash: string;
+  callerKind: string;
+  callerId: string;
+  route: string;
+};
 
 export async function createGroup(
   deps: ServiceDeps,
@@ -41,15 +52,21 @@ export async function createGroup(
     connectionId: ConnectionId;
     verificationMode: VerificationMode | null;
     notes: { name: string; body: string }[];
+    idempotency?: IdempotencyInput;
   }
-): Promise<{ group: Group; root: Task }> {
+): Promise<{ group: Group; root: Task; replay: boolean }> {
   return deps.store.transact(async tx => {
-    const person = await requireActivePerson(tx, input.workspaceId, input.personId);
-    const workspace = await tx.workspace(input.workspaceId);
+    const workspace = await tx.lockWorkspace(input.workspaceId);
 
     if (workspace === null) {
       throw new HivemindError('not_found', 'No workspace with that identifier exists.');
     }
+
+    const replayed = await replayedGroup(tx, input.workspaceId, input.idempotency);
+
+    if (replayed) return replayed;
+
+    const person = await requireActivePerson(tx, input.workspaceId, input.personId);
 
     const name = requireGroupName(input.name);
     const goal = requireBoundedText(input.goal, 'goal', 32 * 1024);
@@ -121,7 +138,14 @@ export async function createGroup(
       data: {},
     });
 
-    return { group, root };
+    if (input.idempotency) {
+      await rememberIdempotency(tx, input.workspaceId, input.idempotency, group.id, now, {
+        group,
+        root,
+      });
+    }
+
+    return { group, root, replay: false };
   });
 }
 
@@ -135,15 +159,26 @@ export async function createChildTask(
     description: string;
     verificationMode: VerificationMode | null;
     dependsOn: TaskId[];
+    idempotency?: IdempotencyInput;
   }
 ): Promise<{ task: Task }> {
   return deps.store.transact(async tx => {
     const group = await requireGroup(tx, input.workspaceId, input.groupId);
     const root = await requireRoot(tx, input.workspaceId, input.groupId);
+    const replayed = await replayedTask(tx, input.workspaceId, input.idempotency);
+
+    if (replayed) return { task: replayed };
+
+    const session = await lockedCaller(tx, input.workspaceId, input.actor.sessionId);
+
+    if (session !== null && session.group_id !== group.id) {
+      throw new HivemindError('not_found', 'No task with that identifier is in this workspace.');
+    }
+
     const decision = evaluatePolicy({
-      role: 'planner',
+      role: session?.role ?? 'planner',
       action: 'create_child_task',
-      released: !input.actor.live,
+      released: session === null ? !input.actor.live : session.life === 'released',
       taskKind: 'root',
       taskState: root.state,
       relation: 'own',
@@ -214,6 +249,10 @@ export async function createChildTask(
       data: {},
     });
 
+    if (input.idempotency) {
+      await rememberIdempotency(tx, input.workspaceId, input.idempotency, task.id, now, { task });
+    }
+
     return { task };
   });
 }
@@ -230,11 +269,41 @@ export async function reportTransition(
     note: string;
     evidence: EvidenceEntry[];
     nextVerificationMode: VerificationMode | null;
+    idempotency?: {
+      key: string;
+      bodyHash: string;
+      callerKind: string;
+      callerId: string;
+      route: string;
+    };
   }
 ): Promise<{ task: Task; group: Group }> {
   return deps.store.transact(async tx => {
     const group = await requireGroup(tx, input.workspaceId, input.groupId);
+    const root = await requireRoot(tx, input.workspaceId, input.groupId);
     const task = await requireTask(tx, input.workspaceId, input.taskId, input.groupId);
+    const idempotency = input.idempotency;
+
+    if (idempotency) {
+      const existing = await tx.findIdempotency(
+        input.workspaceId,
+        idempotency.callerKind,
+        idempotency.callerId,
+        idempotency.route,
+        idempotency.key
+      );
+
+      if (existing) {
+        if (existing.body_hash !== idempotency.bodyHash) {
+          throw new HivemindError(
+            'idempotency_conflict',
+            'That idempotency key was used with a different body.'
+          );
+        }
+
+        return storedTransition(existing.response) ?? { task, group };
+      }
+    }
 
     if (task.version !== input.expectedVersion) {
       throw new HivemindError('conflict', 'The task changed since it was read.', {
@@ -244,6 +313,11 @@ export async function reportTransition(
     }
 
     const actor = await resolveActor(tx, input.workspaceId, group, input.actor);
+
+    if (actor.caller) {
+      requireReporterTask(actor.caller, task, root, input.to, input.nextVerificationMode);
+    }
+
     const applied = await applyReport(deps, tx, group, task, actor.transition, actor.stored, {
       to: input.to,
       note: input.note,
@@ -255,16 +329,45 @@ export async function reportTransition(
     const rootEnteredImplementing =
       task.parent_id === null && applied.task.state === 'implementing';
 
-    if (childClosed || rootEnteredImplementing) {
-      const closed = await closeRootWhenChildrenDone(deps, tx, applied.group);
+    const result =
+      childClosed || rootEnteredImplementing
+        ? await finishedRoot(deps, tx, applied, rootEnteredImplementing)
+        : applied;
 
-      if (rootEnteredImplementing) return closed;
-
-      return { task: applied.task, group: closed.group };
+    if (input.actor.kind === 'session') {
+      await tx.touchReport(input.actor.sessionId, formatTime(deps.clock.now()));
     }
 
-    return applied;
+    if (idempotency) {
+      await tx.insertIdempotency({
+        workspaceId: input.workspaceId,
+        callerKind: idempotency.callerKind,
+        callerId: idempotency.callerId,
+        route: idempotency.route,
+        key: idempotency.key,
+        bodyHash: idempotency.bodyHash,
+        recordId: result.task.id,
+        completed: true,
+        response: { task: result.task, group: result.group },
+        at: formatTime(deps.clock.now()),
+      });
+    }
+
+    return result;
   });
+}
+
+async function finishedRoot(
+  deps: ServiceDeps,
+  tx: UnitOfWork,
+  applied: { task: Task; group: Group },
+  rootEnteredImplementing: boolean
+): Promise<{ task: Task; group: Group }> {
+  const closed = await closeRootWhenChildrenDone(deps, tx, applied.group);
+
+  if (rootEnteredImplementing) return closed;
+
+  return { task: applied.task, group: closed.group };
 }
 
 export async function raiseBudget(
@@ -402,8 +505,7 @@ async function applyReport(
     childCount: counts.childCount,
     openChildCount: counts.openChildCount,
     failedChildCount: counts.failedChildCount,
-    // Sessions are not stored yet, so no implementer has been started through this service.
-    implementerEverStarted: false,
+    implementerEverStarted: await tx.implementerEverStarted(task.group_id),
   });
 
   if (!decision.ok) {
@@ -518,7 +620,7 @@ async function closeRootWhenChildrenDone(
     childCount: counts.childCount,
     openChildCount: counts.openChildCount,
     failedChildCount: counts.failedChildCount,
-    implementerEverStarted: false,
+    implementerEverStarted: await tx.implementerEverStarted(group.id),
   });
 
   if (!decision.ok) return { task: root, group };
@@ -544,15 +646,38 @@ async function resolveActor(
   workspaceId: WorkspaceId,
   group: Group,
   actor: ReportActor
-): Promise<{ transition: TransitionActor; stored: StoredActor }> {
+): Promise<{ transition: TransitionActor; stored: StoredActor; caller: SessionRecord | null }> {
   if (actor.kind === 'service') {
-    return { transition: { kind: 'service' }, stored: { kind: 'service', id: serviceId } };
+    return {
+      transition: { kind: 'service' },
+      stored: { kind: 'service', id: serviceId },
+      caller: null,
+    };
   }
 
   if (actor.kind === 'session') {
+    const session = await lockedCaller(tx, workspaceId, actor.sessionId);
+
+    if (session === null) {
+      return {
+        transition: { kind: 'session', role: actor.role, live: actor.live },
+        stored: { kind: 'session', id: actor.sessionId },
+        caller: null,
+      };
+    }
+
+    if (session.group_id !== group.id) {
+      throw new HivemindError('not_found', 'No task with that identifier is in this workspace.');
+    }
+
     return {
-      transition: { kind: 'session', role: actor.role, live: actor.live },
-      stored: { kind: 'session', id: actor.sessionId },
+      transition: {
+        kind: 'session',
+        role: session.role,
+        live: session.life === 'live' || session.life === 'starting',
+      },
+      stored: { kind: 'session', id: session.id },
+      caller: session,
     };
   }
 
@@ -565,10 +690,53 @@ async function resolveActor(
       administrator: person.workspace_role === 'administrator',
     },
     stored: { kind: 'person', id: person.id },
+    caller: null,
   };
 }
 
-async function appendEvent(
+function requireReporterTask(
+  session: SessionRecord,
+  task: Task,
+  root: Task,
+  to: TaskState,
+  nextVerificationMode: VerificationMode | null
+): void {
+  const input = {
+    role: session.role,
+    released: session.life === 'released',
+    taskKind: task.parent_id === null ? 'root' : 'child',
+    taskState: task.state,
+    relation: session.task_id === task.id ? 'own' : 'other',
+    rootState: root.state,
+    targetRole: session.role,
+    targetStartedByCaller: false,
+    targetTaskClosed: isClosedState(task.state),
+  } as const;
+  const decision = evaluatePolicy({
+    ...input,
+    action: to === 'failed' ? 'fail_task' : 'report_transition',
+  });
+
+  if (!decision.allowed) {
+    throw new HivemindError('policy_denied', decision.message, {
+      role: decision.role,
+      action: decision.action,
+    });
+  }
+
+  if (nextVerificationMode === null || nextVerificationMode === task.verification_mode) return;
+
+  const mode = evaluatePolicy({ ...input, action: 'move_verification_mode' });
+
+  if (!mode.allowed) {
+    throw new HivemindError('policy_denied', mode.message, {
+      role: mode.role,
+      action: mode.action,
+    });
+  }
+}
+
+export async function appendEvent(
   deps: ServiceDeps,
   tx: UnitOfWork,
   draft: {
@@ -602,6 +770,204 @@ async function appendEvent(
   };
 
   await tx.insertEvent(event);
+}
+
+async function lockedCaller(tx: UnitOfWork, workspaceId: WorkspaceId, sessionId: SessionId) {
+  const session = await tx.lockSession(workspaceId, sessionId);
+
+  if (session === null) return null;
+
+  if (session.token_hash === null) {
+    throw new HivemindError('unauthenticated', 'The session token is not valid.');
+  }
+
+  if (session.life === 'ended' || session.life === 'start_failed') {
+    throw new HivemindError('session_not_active', 'The session cannot act from this life.', {
+      life: session.life,
+    });
+  }
+
+  if (session.end_requested_at !== null) {
+    throw new HivemindError(
+      'session_not_active',
+      'The session is ending and cannot start new work.',
+      { life: session.life }
+    );
+  }
+
+  return session;
+}
+
+async function replayedGroup(
+  tx: UnitOfWork,
+  workspaceId: WorkspaceId,
+  idempotency: IdempotencyInput | undefined
+): Promise<{ group: Group; root: Task; replay: true } | null> {
+  const existing = await replayedRecord(tx, workspaceId, idempotency);
+
+  if (existing === null) return null;
+
+  const saved = storedTransition(existing.response);
+
+  if (saved) return { group: saved.group, root: saved.task, replay: true };
+
+  const recordId = existing.record_id;
+
+  if (recordId === null) {
+    throw new HivemindError(
+      'request_in_progress',
+      'The first request with this key is not complete.'
+    );
+  }
+
+  const group = await tx.lockGroup(workspaceId, requireGroupId(recordId));
+
+  if (group === null) {
+    throw new HivemindError(
+      'request_in_progress',
+      'The first request with this key is not complete.'
+    );
+  }
+
+  const root = await requireRoot(tx, workspaceId, group.id);
+
+  return { group, root, replay: true };
+}
+
+async function replayedTask(
+  tx: UnitOfWork,
+  workspaceId: WorkspaceId,
+  idempotency: IdempotencyInput | undefined
+): Promise<Task | null> {
+  const existing = await replayedRecord(tx, workspaceId, idempotency);
+
+  if (existing === null) return null;
+
+  const saved = storedTask(existing.response);
+
+  if (saved) return saved;
+
+  const recordId = existing.record_id;
+
+  if (recordId === null) {
+    throw new HivemindError(
+      'request_in_progress',
+      'The first request with this key is not complete.'
+    );
+  }
+
+  const task = await tx.lockTask(workspaceId, requireTaskId(recordId));
+
+  if (task === null) {
+    throw new HivemindError(
+      'request_in_progress',
+      'The first request with this key is not complete.'
+    );
+  }
+
+  return task;
+}
+
+async function replayedRecord(
+  tx: UnitOfWork,
+  workspaceId: WorkspaceId,
+  idempotency: IdempotencyInput | undefined
+): Promise<IdempotencyRecord | null> {
+  if (idempotency === undefined) return null;
+
+  const existing = await tx.findIdempotency(
+    workspaceId,
+    idempotency.callerKind,
+    idempotency.callerId,
+    idempotency.route,
+    idempotency.key
+  );
+
+  if (existing === null) return null;
+
+  if (existing.body_hash !== idempotency.bodyHash) {
+    throw new HivemindError(
+      'idempotency_conflict',
+      'That idempotency key was used with a different body.'
+    );
+  }
+
+  if (existing.record_id === null) {
+    throw new HivemindError(
+      'request_in_progress',
+      'The first request with this key is not complete.'
+    );
+  }
+
+  return existing;
+}
+
+async function rememberIdempotency(
+  tx: UnitOfWork,
+  workspaceId: WorkspaceId,
+  idempotency: IdempotencyInput,
+  recordId: string,
+  at: string,
+  response: unknown = {}
+): Promise<void> {
+  await tx.insertIdempotency({
+    workspaceId,
+    callerKind: idempotency.callerKind,
+    callerId: idempotency.callerId,
+    route: idempotency.route,
+    key: idempotency.key,
+    bodyHash: idempotency.bodyHash,
+    recordId,
+    completed: true,
+    response,
+    at,
+  });
+}
+
+function storedTransition(response: unknown): { task: Task; group: Group } | null {
+  const task = storedTask(response) ?? storedNamedTask(response, 'root');
+  const group = storedGroup(response);
+
+  if (task === null || group === null) return null;
+
+  return { task, group };
+}
+
+function storedTask(response: unknown): Task | null {
+  return storedNamedTask(response, 'task');
+}
+
+function storedNamedTask(response: unknown, field: string): Task | null {
+  if (typeof response !== 'object' || response === null) return null;
+
+  const value = Reflect.get(response, field);
+
+  if (typeof value !== 'object' || value === null) return null;
+
+  const id = Reflect.get(value, 'id');
+  const state = Reflect.get(value, 'state');
+  const version = Reflect.get(value, 'version');
+
+  if (typeof id !== 'string' || typeof state !== 'string' || typeof version !== 'number') {
+    return null;
+  }
+
+  return value as Task;
+}
+
+function storedGroup(response: unknown): Group | null {
+  if (typeof response !== 'object' || response === null) return null;
+
+  const value = Reflect.get(response, 'group');
+
+  if (typeof value !== 'object' || value === null) return null;
+
+  const id = Reflect.get(value, 'id');
+  const status = Reflect.get(value, 'status');
+
+  if (typeof id !== 'string' || typeof status !== 'string') return null;
+
+  return value as Group;
 }
 
 async function requireGroup(
@@ -688,7 +1054,7 @@ function requireGroupName(name: string): string {
   return name;
 }
 
-function requireTitle(title: string): string {
+export function requireTitle(title: string): string {
   if (title.trim().length === 0 || title.length > 120) {
     throw new HivemindError('validation_failed', 'A task title is 1 to 120 characters.', {
       field: 'title',

@@ -38,6 +38,34 @@ export function canonicalizeDecimal(value: string): string {
   return `${normalizedWhole}.${fraction}`;
 }
 
+/** Turn a finite nonnegative number into a canonical decimal string. */
+export function decimalFromNumber(value: number): string {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new HivemindError('validation_failed', 'The amount is not a decimal number.', {
+      field: 'budget',
+    });
+  }
+
+  return canonicalizeDecimal(plainDecimal(value.toString()));
+}
+
+/** Add two non-negative decimal strings and return the canonical sum. */
+export function addDecimal(left: string, right: string): string {
+  const width = Math.max(parts(left)[1].length, parts(right)[1].length);
+
+  return fromScaled(toScaled(left, width) + toScaled(right, width), width);
+}
+
+/** Subtract a non-negative decimal from another. A negative result is zero. */
+export function subtractDecimal(left: string, right: string): string {
+  const width = Math.max(parts(left)[1].length, parts(right)[1].length);
+  const difference = toScaled(left, width) - toScaled(right, width);
+
+  if (difference <= 0n) return '0';
+
+  return fromScaled(difference, width);
+}
+
 export function requirePositiveDecimal(value: string): string {
   const canonical = canonicalizeDecimal(value);
 
@@ -55,6 +83,55 @@ function parts(value: string): [string, string] {
   const [whole, fraction = ''] = canonical.split('.');
 
   return [whole ?? '0', fraction];
+}
+
+function toScaled(value: string, width: number): bigint {
+  const [whole, fraction] = parts(value);
+  const padded = fraction.padEnd(width, '0');
+
+  return BigInt(whole) * 10n ** BigInt(width) + BigInt(padded === '' ? '0' : padded);
+}
+
+function fromScaled(amount: bigint, width: number): string {
+  const text = scaledText(amount, width);
+
+  if (decimal.test(text) !== true) {
+    throw new HivemindError('validation_failed', 'The amount is too large.', {
+      field: 'budget',
+    });
+  }
+
+  return text;
+}
+
+function scaledText(amount: bigint, width: number): string {
+  if (width === 0) return amount.toString();
+
+  const scale = 10n ** BigInt(width);
+  const whole = amount / scale;
+  const fraction = (amount % scale).toString().padStart(width, '0').replace(/0+$/, '');
+
+  if (fraction.length === 0) return whole.toString();
+
+  return `${whole}.${fraction}`;
+}
+
+function plainDecimal(text: string): string {
+  const match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(text);
+
+  if (match === null || match[3] === undefined) return text;
+
+  const fraction = match[2] ?? '';
+  const digits = `${match[1] ?? '0'}${fraction}`.replace(/^0+/, '') || '0';
+  const shift = Number(match[3]) - fraction.length;
+
+  if (shift >= 0) return `${digits}${'0'.repeat(shift)}`;
+
+  const places = -shift;
+
+  if (places >= digits.length) return `0.${'0'.repeat(places - digits.length)}${digits}`;
+
+  return `${digits.slice(0, digits.length - places)}.${digits.slice(digits.length - places)}`;
 }
 
 function compareInteger(left: string, right: string): number {
