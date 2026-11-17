@@ -44,8 +44,7 @@ when they conflict.
 
 ## Pull request size
 
-A pull request touches at most 25 files unless the change cannot be split. When it
-cannot, the pull request says why.
+The limit is in [CONTRIBUTING.md](CONTRIBUTING.md#pull-requests).
 
 ## Pull request follow-through
 
@@ -63,15 +62,17 @@ without waiting to be asked.
 
 ## agent-hivemind
 
-A Bun + TypeScript application. This repository is early: treat `src/` as the product
-surface and keep scaffolding thin until real domain code lands.
+A Bun + TypeScript service. Product code lives under `src/`: the record of groups,
+tasks, and sessions, the HTTP service, and the `hivemind` client. How to run it is
+in [README.md](README.md).
 
 ## Commands
 
 ### Development
 
-- `bun run dev` — start with watch mode
-- `bun run start` — run the entrypoint once
+- `bun run dev` — start the service with watch mode
+- `bun run start` — run the service once
+- `bun run hivemind` — client for a running service
 
 ### Testing
 
@@ -190,24 +191,10 @@ trade-offs, and known limits.
 
 ## Commit sign-off
 
-Every commit must be signed off under the identity of the **human who requested the
-work**.
-
-Ask that human and get an explicit sign-off before putting their name on the commit.
-Do not assume it.
-
-**Cloud agents:** keep `user.name` / `user.email` as the agent. Put the human on both
-trailers, and do **not** run `git commit -s` (that appends a banned agent `Signed-off-by`):
-
-```
-Co-authored-by: Human Name <human@example.com>
-Signed-off-by: Human Name <human@example.com>
-```
-
-**Humans committing locally:** `git commit -s` is fine; CI requires `Signed-off-by` to
-match the author.
-
-CI rejects any `Signed-off-by` carrying a coding-agent identity.
+The sign-off line is in
+[CONTRIBUTING.md](CONTRIBUTING.md#developer-certificate-of-origin-dco). Ask the human
+who requested the work, and get an explicit sign-off before putting their name on the
+commit. Do not assume it.
 
 ## Path aliases
 
@@ -220,7 +207,7 @@ Relative imports within a module are fine. Prefer `@/` when crossing package roo
 
 - When a file starts doing every job in its area, split it on the boundaries it already has
 - Do not grow a function in application code past 100 lines, or a TypeScript file of application code past 300 lines. Tests are outside both caps
-- Sign off every commit under the human who requested the work (see Commit sign-off)
+- Sign off every commit under the human who requested the work (see [CONTRIBUTING.md](CONTRIBUTING.md#developer-certificate-of-origin-dco))
 - Prefer `bunx` over `npx`
 - When moving code, do not leave diff-narration comments
 - Avoid empty interfaces — use `Record<never, never>` or a concrete union

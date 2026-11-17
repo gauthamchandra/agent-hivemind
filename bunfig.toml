@@ -15,15 +15,3 @@ include = [
 [install]
 frozenLockfile = false
 cache = true
-
-[build]
-minify = false
-sourcemap = "external"
-
-exclude = [
-  "**/*.test.ts",
-  "**/*.test.js",
-  "coverage/",
-  "docs/",
-  "*.md"
-]

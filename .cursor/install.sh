@@ -2,14 +2,26 @@
 # Cloud Agent install script for agent-hivemind.
 #
 # Idempotent, non-interactive setup:
-#   - Bun 1.3.4 (pinned in .tool-versions)
-# then installs project dependencies with the frozen lockfile when present.
+#   - the Bun version named in .tool-versions
+# then installs project dependencies from the tracked lockfile.
+# The zip checksums below are for one Bun release. A different .tool-versions
+# entry exits before the download.
 #
 # Bun ships as a plain executable from GitHub releases, so this pins the
 # artifact SHA-256 and verifies it before extracting.
 set -euo pipefail
 
-BUN_VERSION="1.3.4"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUN_VERSION="$(awk '/^bun[[:space:]]+/ { print $2; exit }' "${ROOT}/.tool-versions")"
+if [ -z "${BUN_VERSION}" ]; then
+  echo ".tool-versions does not name a bun version" >&2
+  exit 1
+fi
+CHECKSUM_BUN_VERSION="1.3.4"
+if [ "${BUN_VERSION}" != "${CHECKSUM_BUN_VERSION}" ]; then
+  echo "bun checksums are for ${CHECKSUM_BUN_VERSION}, and .tool-versions names ${BUN_VERSION}" >&2
+  exit 1
+fi
 BUN_BIN="/usr/local/bin/bun"
 BUNX_BIN="/usr/local/bin/bunx"
 
@@ -58,11 +70,7 @@ install_bun
 export PATH="/usr/local/bin:${PATH}"
 
 log "Installing project dependencies"
-if [ -f bun.lock ]; then
-  "${BUN_BIN}" install --frozen-lockfile
-else
-  "${BUN_BIN}" install
-fi
+(cd "${ROOT}" && "${BUN_BIN}" install --frozen-lockfile)
 
 log "Toolchain ready"
 "${BUN_BIN}" --version
