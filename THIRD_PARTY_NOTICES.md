@@ -40,3 +40,11 @@ patterns) at the same commit. Licensed Apache-2.0.
   The full pstack surface (including `/poteto-mode`) remains available via the Cursor
   plugin enabled in `.cursor/settings.json`. Prefer updating the plugin over editing
   vendored copies unless a project-local fork is intentional.
+
+## Superpowers skills
+
+- **Source:** [obra/superpowers](https://github.com/obra/superpowers)
+  at commit `22f0b463e7a5e579904dd6211a520321035526f7`
+- **Path:** `.agents/skills/receiving-code-review/`
+- **License:** MIT (Copyright (c) 2025 Jesse Vincent; see `.agents/skills/receiving-code-review/LICENSE`)
+- **Note:** Snapshots for harness-agnostic discovery under `.agents/skills/`.

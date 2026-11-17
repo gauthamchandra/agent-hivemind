@@ -27,6 +27,13 @@ When skills or plugins disagree, resolve in this order:
 5. **pstack Cursor plugin** (`.cursor/settings.json`) — `/poteto-mode` and the rest of the
    plugin surface. Plugin-only; not required for non-Cursor harnesses.
 
+Opt-in workflow skills, also under `.agents/skills/`:
+
+- **[receiving-code-review](.agents/skills/receiving-code-review/SKILL.md)** — before
+  implementing review suggestions.
+- **[holistic-review-resolution](.agents/skills/holistic-review-resolution/SKILL.md)** —
+  when addressing review comments, findings, or a repeated review iteration.
+
 ## Writing
 
 Agents writing code, commits, pull requests, ADRs, and tickets follow
