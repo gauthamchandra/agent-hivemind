@@ -37,7 +37,9 @@ install and then runs `bun install`.
 ## Pull requests
 
 1. Branch from `main`.
-2. Keep the PR focused. Prefer several small PRs over one large one.
+2. Keep the PR focused. Prefer several small PRs over one large one. A pull request
+   touches at most 25 files unless the change cannot be split. When it cannot, the
+   pull request says why.
 3. Fill out the PR template. Lead with why, not a file tour.
 4. Sign off every commit (see below).
 5. Disclose AI assistance when a model substantially shaped the change.

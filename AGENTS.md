@@ -40,6 +40,11 @@ Agents writing code, commits, pull requests, ADRs, and tickets follow
 [write-for-humans](.agents/skills/write-for-humans/SKILL.md). Repository rules win
 when they conflict.
 
+## Pull request size
+
+A pull request touches at most 25 files unless the change cannot be split. When it
+cannot, the pull request says why.
+
 ## Pull request follow-through
 
 After you open a pull request, stay with it until it is merged or closed. Do this
