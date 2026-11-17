@@ -15,7 +15,7 @@ import type { Platforms } from '@/ports/platform.ts';
 import { systemRandom } from '@/ports/random.ts';
 import { openPgliteStore } from '@/storage/postgres/store.ts';
 
-type Cli = {
+export type Cli = {
   server: { stop(): void };
   io: {
     env: Record<string, string | undefined>;
@@ -38,7 +38,7 @@ afterEach(async () => {
   await Promise.all(open.map(db => db.close()));
 });
 
-async function bootCli(): Promise<Cli> {
+export async function bootCli(): Promise<Cli> {
   const db = new PGlite();
   databases.push(db);
   await db.waitReady;
@@ -127,7 +127,7 @@ async function bootCli(): Promise<Cli> {
   return { server, io, out, err, sessionId: createdBody.session.id, code };
 }
 
-async function enrolledCli(): Promise<Cli> {
+export async function enrolledCli(): Promise<Cli> {
   const cli = await bootCli();
 
   expect(
@@ -142,7 +142,7 @@ async function enrolledCli(): Promise<Cli> {
   return cli;
 }
 
-async function rootTask(cli: Cli): Promise<{ id: string; version: number }> {
+export async function rootTask(cli: Cli): Promise<{ id: string; version: number }> {
   const listed = await runHivemind({ ...cli.io, args: ['task', 'list', '--json'] });
 
   expect(listed).toBe(0);
@@ -176,7 +176,6 @@ test('enroll stores the token', async () => {
 
   cli.server.stop();
 });
-
 test('whoami json reports the planner', async () => {
   const cli = await enrolledCli();
 
@@ -188,7 +187,6 @@ test('whoami json reports the planner', async () => {
 
   cli.server.stop();
 });
-
 test('task list includes the root', async () => {
   const cli = await enrolledCli();
   const root = await rootTask(cli);
@@ -197,7 +195,6 @@ test('task list includes the root', async () => {
 
   cli.server.stop();
 });
-
 test('task move reports the transition', async () => {
   const cli = await enrolledCli();
   const root = await rootTask(cli);
@@ -224,7 +221,6 @@ test('task move reports the transition', async () => {
 
   cli.server.stop();
 });
-
 test('task create adds a child', async () => {
   const cli = await enrolledCli();
   const root = await rootTask(cli);
@@ -272,7 +268,6 @@ test('task create adds a child', async () => {
 
   cli.server.stop();
 });
-
 test('member start adds a challenger', async () => {
   const cli = await enrolledCli();
   const root = await rootTask(cli);
@@ -303,7 +298,6 @@ test('member start adds a challenger', async () => {
 
   cli.server.stop();
 });
-
 test('release and resume talk to the service', async () => {
   const cli = await enrolledCli();
 
@@ -317,7 +311,6 @@ test('release and resume talk to the service', async () => {
 
   cli.server.stop();
 });
-
 test('whoami without json prints the role', async () => {
   const cli = await enrolledCli();
 
@@ -327,7 +320,6 @@ test('whoami without json prints the role', async () => {
 
   cli.server.stop();
 });
-
 test('a repeated enroll uses the same idempotency key', async () => {
   const keys: string[] = [];
   const io = {
@@ -350,7 +342,6 @@ test('a repeated enroll uses the same idempotency key', async () => {
   expect(keys[0]?.includes('ses_member')).toBe(false);
   expect(keys[0]?.includes('enr_once')).toBe(false);
 });
-
 test('a later member start gets a new idempotency key', async () => {
   const keys: string[] = [];
   const io = {
@@ -388,7 +379,6 @@ test('a later member start gets a new idempotency key', async () => {
   expect(new Set(keys).size).toBe(1);
   expect(keys.join('').includes('ses_secret_token')).toBe(false);
 });
-
 test('an ipv6 loopback http address is a local endpoint', async () => {
   let fetched = false;
   const err: string[] = [];
@@ -645,6 +635,29 @@ test('a flag without a value returns validation_failed', async () => {
   expect(err[0]).toBe('validation_failed');
   expect(err.join('\n')).toContain('Missing a value for --task.');
 });
+test('a missing token says to enroll', async () => {
+  const err: string[] = [];
+  let fetches = 0;
+  const home = await mkdtemp(join(tmpdir(), 'hivemind-notoken-'));
+  const code = await runHivemind({
+    args: ['whoami'],
+    env: { HIVEMIND_URL: 'http://127.0.0.1:9', HIVEMIND_HOME: home },
+    stdout: () => {},
+    stderr: line => {
+      err.push(line);
+    },
+    fetch: (async () => {
+      fetches += 1;
+      throw new Error('the command should not call the service');
+    }) as unknown as typeof fetch,
+    sleep: async () => {},
+  });
+
+  expect(code).toBe(1);
+  expect(err[0]).toBe('unauthenticated');
+  expect(err.join('\n')).toContain('Enroll again, or ask for a new enrollment code.');
+  expect(fetches).toBe(0);
+});
 
 test('a token file that cannot be read is not a network failure', async () => {
   const err: string[] = [];
@@ -672,7 +685,6 @@ test('a token file that cannot be read is not a network failure', async () => {
   expect(err.join('\n')).not.toContain('The service cannot be reached.');
   expect(fetches).toBe(0);
 });
-
 test('a token file that cannot be read is not a usage error', async () => {
   const err: string[] = [];
   const home = await mkdtemp(join(tmpdir(), 'hivemind-token-exit-'));
@@ -731,28 +743,69 @@ test('a non-JSON error status is not retried', async () => {
   expect(err.join('\n')).not.toContain('The service cannot be reached.');
 });
 
-test('a missing token says to enroll', async () => {
-  const err: string[] = [];
-  let fetches = 0;
-  const home = await mkdtemp(join(tmpdir(), 'hivemind-notoken-'));
-  const code = await runHivemind({
-    args: ['whoami'],
-    env: { HIVEMIND_URL: 'http://127.0.0.1:9', HIVEMIND_HOME: home },
-    stdout: () => {},
-    stderr: line => {
-      err.push(line);
-    },
-    fetch: (async () => {
-      fetches += 1;
-      throw new Error('the command should not call the service');
-    }) as unknown as typeof fetch,
-    sleep: async () => {},
-  });
+test('a response that is not an object is refused', async () => {
+  for (const payload of ['null', '[]']) {
+    let fetches = 0;
+    const err: string[] = [];
+    const code = await runHivemind({
+      args: ['whoami'],
+      env: { HIVEMIND_URL: 'http://127.0.0.1:9', HIVEMIND_TOKEN: 'ses_token' },
+      stdout: () => {},
+      stderr: line => {
+        err.push(line);
+      },
+      fetch: (async () => {
+        fetches += 1;
 
-  expect(code).toBe(1);
-  expect(err[0]).toBe('unauthenticated');
-  expect(err.join('\n')).toContain('Enroll again, or ask for a new enrollment code.');
-  expect(fetches).toBe(0);
+        return new Response(payload, {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as unknown as typeof fetch,
+      sleep: async () => {},
+    });
+
+    expect(code).toBe(11);
+    expect(fetches).toBe(1);
+    expect(err.join('\n')).toContain('The service response was incomplete.');
+    expect(err.join('\n')).not.toContain('The service cannot be reached.');
+  }
+});
+
+test('a null or non-object list row is an incomplete response', async () => {
+  const cases = [
+    { args: ['task', 'history', '--task', 'tsk_1'], body: { events: [null] } },
+    { args: ['task', 'list'], body: { tasks: [null] } },
+    { args: ['member', 'list'], body: { sessions: [null] } },
+    { args: ['task', 'history', '--task', 'tsk_1'], body: { events: ['note'] } },
+  ];
+
+  for (const item of cases) {
+    let fetches = 0;
+    const err: string[] = [];
+    const code = await runHivemind({
+      args: item.args,
+      env: { HIVEMIND_URL: 'http://127.0.0.1:9', HIVEMIND_TOKEN: 'ses_token' },
+      stdout: () => {},
+      stderr: line => {
+        err.push(line);
+      },
+      fetch: (async () => {
+        fetches += 1;
+
+        return new Response(JSON.stringify(item.body), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as unknown as typeof fetch,
+      sleep: async () => {},
+    });
+
+    expect(fetches).toBe(1);
+    expect(code).toBe(11);
+    expect(err.join('\n')).toContain('The service response was incomplete.');
+    expect(err.join('\n')).not.toContain('The service cannot be reached.');
+  }
 });
 
 test('a network failure says the service cannot be reached', async () => {
@@ -774,7 +827,6 @@ test('a network failure says the service cannot be reached', async () => {
   expect(err.join('\n')).toContain('The service cannot be reached.');
   expect(err.join('\n')).not.toContain('The service rejected the command.');
 });
-
 test('a pending member start exits with the start_pending code', async () => {
   const err: string[] = [];
   const out: string[] = [];
