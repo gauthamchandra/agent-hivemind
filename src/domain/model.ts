@@ -1,9 +1,11 @@
 import type {
+  ChangesetId,
   ConnectionId,
   EventId,
   GroupId,
   OperatorKeyId,
   PersonId,
+  SessionId,
   TaskId,
   WorkspaceId,
 } from '@/domain/ids.ts';
@@ -187,7 +189,7 @@ export type Task = {
   state: TaskState;
   state_entered_at: string;
   verification_mode: VerificationMode;
-  changeset_id: null;
+  changeset_id: ChangesetId | null;
   depends_on: TaskId[];
   changeset_round: number;
   respawns_used: number;
@@ -198,13 +200,75 @@ export type Task = {
   version: number;
 };
 
+export const sessionLives = ['starting', 'live', 'released', 'ended', 'start_failed'] as const;
+export type SessionLife = (typeof sessionLives)[number];
+
+export const neutralStatuses = [
+  'working',
+  'idle',
+  'waiting_for_person',
+  'suspended',
+  'stopped',
+  'failed',
+  'unknown',
+] as const;
+export type NeutralStatus = (typeof neutralStatuses)[number];
+
+export function isSessionLife(value: string): value is SessionLife {
+  return sessionLives.some(life => life === value);
+}
+
+export function isNeutralStatus(value: string): value is NeutralStatus {
+  return neutralStatuses.some(status => status === value);
+}
+
+export type SessionRecord = {
+  id: SessionId;
+  workspace_id: WorkspaceId;
+  group_id: GroupId;
+  task_id: TaskId;
+  role: SessionRole;
+  attempt: number;
+  parent_session_id: SessionId | null;
+  platform_session_ref: string | null;
+  platform_address: string | null;
+  title: string;
+  life: SessionLife;
+  token_hash: string | null;
+  enrolled_at: string | null;
+  enrolled_by: 'secret' | 'code' | null;
+  last_report_at: string | null;
+  start_attempt_id: string;
+  existence_evidence_at: string | null;
+  end_requested_at: string | null;
+  end_actor_kind: 'session' | 'person' | 'service' | null;
+  end_actor_id: string | null;
+  end_reason: string | null;
+  end_operation_id: string | null;
+  final_usage_pending: boolean;
+  last_status: NeutralStatus | null;
+  usage: string | null;
+  attributed_to: 'owner' | 'service' | null;
+  secret_delivered: 'yes' | 'no' | 'unknown' | null;
+  created_at: string;
+  ended_at: string | null;
+};
+
 export type TaskEvent = {
   id: EventId;
   workspace_id: WorkspaceId;
   task_id: TaskId;
   group_id: GroupId;
   sequence: number;
-  kind: 'created' | 'transition' | 'verification_mode_changed' | 'owner_instruction';
+  kind:
+    | 'created'
+    | 'transition'
+    | 'verification_mode_changed'
+    | 'owner_instruction'
+    | 'note'
+    | 'session_started'
+    | 'session_start_failed'
+    | 'session_ended';
   actor_kind: 'session' | 'person' | 'service';
   actor_id: string;
   from_state: TaskState | null;

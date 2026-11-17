@@ -53,7 +53,7 @@ function depsFor(
   const clock = manualClock(new Date(start));
   const store = openPgliteStore(db);
 
-  return { store, clock, random, ids: createIds(clock, random) };
+  return { store, clock, random, ids: createIds(clock, random), responseKey: 'test-response-key' };
 }
 
 /** The first 32-byte draw is the bootstrap secret. Later secrets must differ or the hash collides. */

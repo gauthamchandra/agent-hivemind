@@ -8,6 +8,8 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
+    "hivemind-svc": "bun run src/index.ts",
+    "hivemind": "bun run src/cli/main.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",
     "lint": "bunx tsc --noEmit && bunx biome check --error-on-warnings .",

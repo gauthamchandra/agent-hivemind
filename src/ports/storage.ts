@@ -1,13 +1,57 @@
-import type { GroupId, PersonId, TaskId, WorkspaceId } from '@/domain/ids.ts';
+import type {
+  ConnectionId,
+  GroupId,
+  PersonId,
+  SessionId,
+  TaskId,
+  WorkspaceId,
+} from '@/domain/ids.ts';
 import type {
   ContextNote,
   Group,
   OperatorKeyRecord,
   Person,
+  SessionRecord,
   Task,
   TaskEvent,
   Workspace,
 } from '@/domain/model.ts';
+
+export type Occupancy = {
+  live_sessions: number;
+  planner: number;
+  challenger: number;
+  implementer: number;
+  total_sessions: number;
+  workspace_live_sessions: number;
+};
+
+export type OccupancyDelta = {
+  live_sessions: number;
+  planner: number;
+  challenger: number;
+  implementer: number;
+  total_sessions: number;
+};
+
+export type IdempotencyRecord = {
+  body_hash: string;
+  record_id: string | null;
+  completed: boolean;
+  response: unknown;
+};
+
+export type EnrollmentCodeRecord = {
+  id: string;
+  workspace_id: WorkspaceId;
+  session_id: SessionId;
+  code_hash: string;
+  expires_at: string | null;
+  used_at: string | null;
+  attempts: number;
+  voided_at: string | null;
+  created_at: string;
+};
 
 export type ChildCounts = {
   childCount: number;
@@ -39,6 +83,53 @@ export interface UnitOfWork {
   updateTask(task: Task): Promise<void>;
   nextSequence(groupId: GroupId): Promise<number>;
   insertEvent(event: TaskEvent): Promise<void>;
+  lockWorkspace(id: WorkspaceId): Promise<Workspace | null>;
+  occupancy(workspaceId: WorkspaceId, groupId: GroupId): Promise<Occupancy>;
+  addOccupancy(workspaceId: WorkspaceId, groupId: GroupId, delta: OccupancyDelta): Promise<void>;
+  spawnCount(groupId: GroupId, since: string): Promise<number>;
+  insertSpawn(row: {
+    id: string;
+    workspaceId: WorkspaceId;
+    groupId: GroupId;
+    sessionId: SessionId;
+    at: string;
+  }): Promise<void>;
+  holderCount(taskId: TaskId, role: string): Promise<number>;
+  liveOnTask(taskId: TaskId, role: string): Promise<number>;
+  replacementCount(taskId: TaskId, role: string): Promise<number>;
+  nextAttempt(taskId: TaskId, role: string): Promise<number>;
+  implementerEverStarted(groupId: GroupId): Promise<boolean>;
+  insertSession(session: SessionRecord): Promise<void>;
+  updateSession(session: SessionRecord): Promise<void>;
+  lockSession(workspaceId: WorkspaceId, id: SessionId): Promise<SessionRecord | null>;
+  sessionById(id: SessionId): Promise<SessionRecord | null>;
+  sessionByTokenHash(hash: string): Promise<SessionRecord | null>;
+  sessionByEndReceipt(hash: string): Promise<SessionRecord | null>;
+  touchReport(sessionId: SessionId, at: string): Promise<void>;
+  insertEnrollmentCode(code: EnrollmentCodeRecord): Promise<void>;
+  enrollmentByHash(hash: string): Promise<EnrollmentCodeRecord | null>;
+  openEnrollmentCode(sessionId: SessionId): Promise<EnrollmentCodeRecord | null>;
+  saveEnrollmentCode(code: EnrollmentCodeRecord): Promise<void>;
+  voidEnrollmentCodes(sessionId: SessionId, at: string): Promise<void>;
+  findIdempotency(
+    workspaceId: WorkspaceId,
+    callerKind: string,
+    callerId: string,
+    route: string,
+    key: string
+  ): Promise<IdempotencyRecord | null>;
+  insertIdempotency(row: {
+    workspaceId: WorkspaceId;
+    callerKind: string;
+    callerId: string;
+    route: string;
+    key: string;
+    bodyHash: string;
+    recordId: string | null;
+    response?: unknown;
+    completed: boolean;
+    at: string;
+  }): Promise<void>;
 }
 
 export interface Store {
@@ -47,4 +138,15 @@ export interface Store {
   group(workspaceId: WorkspaceId, groupId: GroupId): Promise<Group | null>;
   tasks(workspaceId: WorkspaceId, groupId: GroupId): Promise<Task[]>;
   events(workspaceId: WorkspaceId, groupId: GroupId): Promise<TaskEvent[]>;
+  sessions(workspaceId: WorkspaceId, groupId: GroupId): Promise<SessionRecord[]>;
+  session(workspaceId: WorkspaceId, id: SessionId): Promise<SessionRecord | null>;
+  occupancy(workspaceId: WorkspaceId, groupId: GroupId): Promise<Occupancy>;
+  spawnCount(groupId: GroupId, since: string): Promise<number>;
+  connection(workspaceId: WorkspaceId): Promise<ConnectionId | null>;
+  saveConnection(row: {
+    workspaceId: WorkspaceId;
+    id: ConnectionId;
+    adapter: string;
+    createdAt: string;
+  }): Promise<void>;
 }
