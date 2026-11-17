@@ -1,0 +1,13 @@
+language js
+
+or {
+  `'$name'` as $literal,
+  `"$name"` as $literal
+} where {
+  or {
+    $name <: r"^[dD][eE][vV][iI][nN]$",
+    $name <: r"^[cC][uU][rR][sS][oO][rR]$",
+    $name <: r"^[sS][iI][mM][uU][lL][aA][tT][eE][dD]$"
+  },
+  register_diagnostic(span=$literal, message="src/core must not name a platform.", severity="error")
+}

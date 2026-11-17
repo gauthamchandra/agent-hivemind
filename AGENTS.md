@@ -80,6 +80,12 @@ not (known gaps and YAGNI cuts), which tests come first, and open design questio
 Docs, CI, lint/format config, and other infrastructure can skip this gate. If the caller
 already answered the design questions, do not re-ask — proceed.
 
+## Migrations
+
+Migrations are forward only and zero-downtime. Do not add a down migration, and do not call rollback in production. Correct a released change with a new forward migration.
+
+The decision is recorded in [docs/adr/0001-forward-only-sql-migrations.md](docs/adr/0001-forward-only-sql-migrations.md).
+
 ## Bun runtime
 
 This project uses Bun as the primary runtime. Prefer:
