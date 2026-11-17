@@ -81,9 +81,9 @@ The tree does not go away. It is narrower. Who started whom decides ownership: a
 reports moves only on its own task, and it can end the members it started. Who may _talk_ to
 whom is a separate rule, kept in the same policy table.
 
-Messages will be recorded in the task history. **Today** the policy table lets every role send
-to one member and read messages, and lets only the planner send to all. No route, command,
-delivery or storage exists yet, so agents coordinate only through task reports.
+Messages are recorded in the sender's task history, and a drop is also recorded on the
+recipient's task. The policy table lets every role send to one member and read messages, and
+lets only the planner send to all. `hivemind send` delivers through the service.
 [Who starts whom, and who talks to whom](docs/architecture.md#who-starts-whom-and-who-talks-to-whom)
 lists what exists, what is missing, and what is decided.
 

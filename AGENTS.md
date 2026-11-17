@@ -212,9 +212,16 @@ commit. Do not assume it.
 Relative imports within a module are fine. Prefer `@/` when crossing package roots under
 `src/`.
 
+## ADRs
+
+An ADR uses Michael Nygard's sections: title, status, context, decision, consequences. Include one concrete example in the decision. Do not add other headings.
+
+Name a later ADR only when it supersedes this one. That link sits on the old ADR. An ADR that only builds on an earlier one does not point forward.
+
 ## Guidelines
 
 - When a file starts doing every job in its area, split it on the boundaries it already has
+- Dispatch an enum with several values with a switch, not a chain of equality checks
 - Do not grow a function in application code past 100 lines, or a TypeScript file of application code past 300 lines. Tests are outside both caps
 - Sign off every commit under the human who requested the work (see [CONTRIBUTING.md](CONTRIBUTING.md#developer-certificate-of-origin-dco))
 - Prefer `bunx` over `npx`

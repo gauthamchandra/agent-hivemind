@@ -12,6 +12,9 @@ export type OperatorKeyId = string & { readonly __brand: 'OperatorKeyId' };
 export type ConnectionId = string & { readonly __brand: 'ConnectionId' };
 export type SessionId = string & { readonly __brand: 'SessionId' };
 export type ChangesetId = string & { readonly __brand: 'ChangesetId' };
+export type MessageId = string & { readonly __brand: 'MessageId' };
+export type WaitId = string & { readonly __brand: 'WaitId' };
+export type CopyId = string & { readonly __brand: 'CopyId' };
 
 export type IdClock = { now(): Date };
 export type IdRandom = { bytes(length: number): Uint8Array };
@@ -26,6 +29,9 @@ export type IdFactory = {
   connection(): ConnectionId;
   session(): SessionId;
   changeset(): ChangesetId;
+  message(): MessageId;
+  wait(): WaitId;
+  copy(): CopyId;
 };
 
 const patterns = {
@@ -38,6 +44,9 @@ const patterns = {
   connection: new RegExp(`^con_${body}$`),
   session: new RegExp(`^ses_${body}$`),
   changeset: new RegExp(`^chg_${body}$`),
+  message: new RegExp(`^msg_${body}$`),
+  wait: new RegExp(`^wat_${body}$`),
+  copy: new RegExp(`^cpy_${body}$`),
 } as const;
 
 export function isWorkspaceId(value: string): value is WorkspaceId {
@@ -76,6 +85,18 @@ export function isChangesetId(value: string): value is ChangesetId {
   return patterns.changeset.test(value);
 }
 
+export function isMessageId(value: string): value is MessageId {
+  return patterns.message.test(value);
+}
+
+export function isWaitId(value: string): value is WaitId {
+  return patterns.wait.test(value);
+}
+
+export function isCopyId(value: string): value is CopyId {
+  return patterns.copy.test(value);
+}
+
 export function requireWorkspaceId(value: string): WorkspaceId {
   return brand(value, isWorkspaceId, 'workspace');
 }
@@ -110,6 +131,18 @@ export function requireSessionId(value: string): SessionId {
 
 export function requireChangesetId(value: string): ChangesetId {
   return brand(value, isChangesetId, 'changeset');
+}
+
+export function requireMessageId(value: string): MessageId {
+  return brand(value, isMessageId, 'message');
+}
+
+export function requireWaitId(value: string): WaitId {
+  return brand(value, isWaitId, 'wait');
+}
+
+export function requireCopyId(value: string): CopyId {
+  return brand(value, isCopyId, 'copy');
 }
 
 /** The self-hosted installation's first workspace. The identifier is fixed by the specification. */
@@ -162,6 +195,9 @@ export function createIds(clock: IdClock, random: IdRandom): IdFactory {
     connection: () => requireConnectionId(mint('con_')),
     session: () => requireSessionId(mint('ses_')),
     changeset: () => requireChangesetId(mint('chg_')),
+    message: () => requireMessageId(mint('msg_')),
+    wait: () => requireWaitId(mint('wat_')),
+    copy: () => requireCopyId(mint('cpy_')),
   };
 }
 

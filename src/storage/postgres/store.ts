@@ -3,6 +3,7 @@ import { requireConnectionId } from '@/domain/ids.ts';
 import type { Store, UnitOfWork } from '@/ports/storage.ts';
 import { accountWork } from '@/storage/postgres/account-work.ts';
 import { groupWork } from '@/storage/postgres/group-work.ts';
+import { messageWork } from '@/storage/postgres/message-records.ts';
 import { applyMigrations, executePglite } from '@/storage/postgres/migrate.ts';
 import { readEvents } from '@/storage/postgres/parse-event.ts';
 import { parseGroup } from '@/storage/postgres/parse-group.ts';
@@ -118,5 +119,6 @@ function unitOfWork(sql: Sql): UnitOfWork {
     ...accountWork(sql),
     ...groupWork(sql),
     ...taskWork(sql),
+    ...messageWork(sql),
   };
 }

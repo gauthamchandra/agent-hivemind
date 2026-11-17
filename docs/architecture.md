@@ -39,10 +39,10 @@ A group, from start to finish:
 
 Sessions have two relationships, and they are meant to have different shapes.
 
-| Relationship | Shape                                       | What it decides                                                          | State            |
-| ------------ | ------------------------------------------- | ------------------------------------------------------------------------ | ---------------- |
-| Starting     | A tree                                      | Who owns a task's moves, who may end whom, who may start a replacement.  | Built            |
-| Talking      | A mesh: any agent to any agent in the group | Who may ask for information, give advice, or help review a pull request. | Policy rows only |
+| Relationship | Shape                                       | What it decides                                                          | State |
+| ------------ | ------------------------------------------- | ------------------------------------------------------------------------ | ----- |
+| Starting     | A tree                                      | Who owns a task's moves, who may end whom, who may start a replacement.  | Built |
+| Talking      | A mesh: any agent to any agent in the group | Who may ask for information, give advice, or help review a pull request. | Built |
 
 The main difference between this project and parent-and-child orchestration is the second row.
 In a tree, a message from one branch to another goes up to a common parent and back down. Here
@@ -56,10 +56,11 @@ verifier at a time, and only they report its moves. A message is not a report. T
 gives messages their own actions, and nothing in it lets a message move a task.
 
 The decision, with what it rules out and what is still open, is in
-[ADR 0004](adr/0004-peer-messaging-within-a-group.md). Today the policy table lets every role
-send to one member and read messages, and lets only the planner send to all.
-`hivemind member list` shows the sessions in the group. No route, command, delivery or storage
-for messages exists. See [Not built yet](#not-built-yet).
+[ADR 0004](adr/0004-peer-messaging-within-a-group.md). The policy table lets every role send to
+one member and read messages, and lets only the planner send to all. `hivemind send`, `ask`,
+`answer`, `relay` and `inbox` call the message routes. The service stores each message, then the
+process drains the outbox and asks the platform to deliver it. Where the task history records a
+message is in [ADR 0006](adr/0006-where-a-message-is-recorded.md). Semantic routing is not built.
 
 ### Approval stays outside the swarm
 
@@ -445,25 +446,22 @@ one process today.
 
 This list is the gap between what the code models and what a running system can do.
 
-1. **No messages between sessions, which is the project's main differentiator.** The policy
-   table has the rows. Still to build: a route and a command to send and read messages,
-   delivery through the platform adapter, a check that sender and recipient share a group, a
-   message event kind in the task history (a forward migration), and semantic routing. The
-   adapter's `send` is never called. See [ADR 0004](adr/0004-peer-messaging-within-a-group.md).
+1. **Semantic routing is not built.** A session can message one member, or the planner can
+   message every member. It cannot yet ask the service to choose the members a question is
+   about. See [ADR 0004](adr/0004-peer-messaging-within-a-group.md).
 2. **Spend is not tracked while sessions run.** Usage is read only when a session ends, so a
-   long-running agent can pass the budget unnoticed. No timer or scheduled job exists in the
-   service. The polling job comes first and only blocks starts. The over-budget response comes
-   after it: tell the running agents to finish, then end them after a five-minute grace period.
-   That response needs two things that do not exist yet. One is message delivery to running
-   sessions, since the adapter's `send` is never called (see item 1). The other is a record of
-   when the grace period ends, if it is to survive a restart. The reaper role comes later still.
-   See [ADR 0005](adr/0005-spend-is-polled-while-sessions-run.md).
+   long-running agent can pass the budget unnoticed. The process drains the message outbox on a
+   timer. It does not poll spend. The polling job comes first and only blocks starts. The
+   over-budget response comes after it: tell the running agents to finish, then end them after a
+   five-minute grace period. Delivery to a running session exists. A record of when the grace
+   period ends does not, and the reaper role comes later still. See
+   [ADR 0005](adr/0005-spend-is-polled-while-sessions-run.md).
 3. **No real platform.** The only adapter is the simulated one. It lives in the service's
    process, hands out made-up addresses, and records sessions without running an agent. A local
    run starts a planner that never reports. The tests are where a whole group runs.
-4. **A person can only open a group.** Every other route needs a session token. There is no way
-   over HTTP to read a group, fail a task, end a session, or change a budget, though the
-   services behind each accept a person as the actor.
+4. **A person can open a group and read or send its mail.** Ending a session, failing a task,
+   and changing a budget still have no person route, though the services behind each accept a
+   person as the actor.
 5. **Nothing starts a second planner.** A person starts the planner when opening a group, and
    no policy row lets a session start one. A group whose planner ends cannot get another.
 6. **Platform status is never read.** The adapter's suspend, read status, read many and probe

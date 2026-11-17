@@ -29,14 +29,26 @@ export type SimulatedPlatform = {
   prompts(): string[];
   secretFor(idempotencyKey: string): string | null;
   calls(): readonly string[];
+  sentMessages(): {
+    ref: string;
+    body: string;
+    statusAtSend: string;
+    result: import('@/domain/platform.ts').SendResult;
+  }[];
+  setSessionStatus(ref: string, status: string): void;
 };
 
-export function createSimulatedPlatform(connectionId: ConnectionId): SimulatedPlatform {
+export function createSimulatedPlatform(
+  connectionId: ConnectionId,
+  options?: { recordSent?: boolean }
+): SimulatedPlatform {
   const world: SimWorld = {
     enabled: new Set(capabilities),
     sessions: [],
     logs: [],
     calls: [],
+    sent: [],
+    recordSent: options?.recordSent !== false,
     queued: null,
     loseStart: false,
     sendResult: 'accepted',
@@ -112,5 +124,11 @@ export function createSimulatedPlatform(connectionId: ConnectionId): SimulatedPl
       return world.sessions.find(session => session.key === key)?.secret ?? null;
     },
     calls: () => world.calls,
+    sentMessages: () => world.sent,
+    setSessionStatus(ref, status) {
+      const session = world.sessions.find(item => item.ref === ref);
+
+      if (session !== undefined) session.rawStatus = status;
+    },
   };
 }

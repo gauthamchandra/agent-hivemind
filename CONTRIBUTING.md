@@ -61,9 +61,8 @@ A bug fix, a refactor that keeps the boundaries, and a change that follows an ex
 need no ADR. When in doubt, write one. They are short.
 
 Name the file with the next number, `NNNN-short-name.md`. Follow
-[ADR 0001](docs/adr/0001-forward-only-sql-migrations.md) and the document shape in the
-write-for-humans skill: status, why, the decision, tenets, what it rules out, consequences,
-rollout. An ADR can be accepted before its code exists. Say so in its status. Other docs, such
+[ADR 0001](docs/adr/0001-forward-only-sql-migrations.md) and the document shape in
+[AGENTS.md](AGENTS.md#adrs). An ADR can be accepted before its code exists. Say so in its status. Other docs, such
 as `docs/architecture.md`, link to the ADR and do not repeat its reasoning.
 
 ---

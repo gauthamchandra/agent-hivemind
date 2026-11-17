@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PGlite } from '@electric-sql/pglite';
 import {
@@ -71,6 +72,28 @@ async function expectAppliedOnce(execute: (db: PGlite) => ExecuteSql): Promise<v
 
   expect(spawn.rows).toHaveLength(1);
 }
+
+test('a timestamp column is named with _at or _until', async () => {
+  const directory = fileURLToPath(new URL('./migrations/', import.meta.url));
+  const files = (await readdir(directory)).filter(name => name.endsWith('.sql'));
+  const offenders: string[] = [];
+
+  for (const name of files) {
+    const text = await readFile(join(directory, name), 'utf8');
+
+    for (const match of text.matchAll(/^\s*([a-z_]+)\s+timestamptz\b/gm)) {
+      const column = match[1];
+
+      // `at` is the event time already shipped in the first migrations.
+      if (column === undefined || column === 'at') continue;
+      if (column.endsWith('_at') || column.endsWith('_until')) continue;
+
+      offenders.push(`${name}: ${column}`);
+    }
+  }
+
+  expect(offenders).toEqual([]);
+});
 
 describe('sql migrations', () => {
   test('pglite exec applies the ordered files once', () => expectAppliedOnce(executePglite));

@@ -223,6 +223,8 @@ export function exitCode(code: string): number {
     unavailable: 11,
     platform_unavailable: 11,
     token_unreadable: 13,
+    rate_limited: 14,
+    recipient_not_available: 15,
   };
 
   return codes[code] ?? 12;

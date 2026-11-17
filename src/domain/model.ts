@@ -275,7 +275,9 @@ export type TaskEvent = {
     | 'note'
     | 'session_started'
     | 'session_start_failed'
-    | 'session_ended';
+    | 'session_ended'
+    | 'message'
+    | 'message_dropped';
   actor_kind: ActorKind;
   actor_id: string;
   from_state: TaskState | null;

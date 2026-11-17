@@ -24,11 +24,20 @@ export type SimSession = {
   ended: boolean;
 };
 
+export type SentPlatformMessage = {
+  ref: string;
+  body: string;
+  statusAtSend: string;
+  result: SendResult;
+};
+
 export type SimWorld = {
   enabled: Set<Capability>;
   sessions: SimSession[];
   logs: string[];
   calls: string[];
+  sent: SentPlatformMessage[];
+  recordSent: boolean;
   queued: { operation: string; errorClass: PlatformErrorClass } | null;
   loseStart: boolean;
   sendResult: SendResult;
@@ -130,11 +139,26 @@ export async function send(world: SimWorld, ref: string, body: string) {
   world.calls.push('send');
   failIfQueued(world, 'send');
 
-  if (Buffer.byteLength(body) > 16 * 1024) {
+  // The service body is 16 KiB. Delivery adds a header in front of it, and the
+  // platform accepts that envelope.
+  if (Buffer.byteLength(body) > 16 * 1024 + 2048) {
     throw new PlatformError('invalid', messages.invalid);
   }
 
-  return world.sendResult;
+  const result = world.sendResult;
+  const statusAtSend = session.rawStatus;
+
+  if (world.recordSent) world.sent.push({ ref, body, statusAtSend, result });
+
+  if (
+    result === 'accepted' &&
+    statusAtSend === 'suspended' &&
+    world.enabled.has('wake_on_message')
+  ) {
+    session.rawStatus = 'working';
+  }
+
+  return result;
 }
 
 export async function suspend(world: SimWorld, ref: string) {

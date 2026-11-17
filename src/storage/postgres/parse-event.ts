@@ -42,7 +42,9 @@ export function parseEvent(row: Row): TaskEvent {
     kind !== 'note' &&
     kind !== 'session_started' &&
     kind !== 'session_start_failed' &&
-    kind !== 'session_ended'
+    kind !== 'session_ended' &&
+    kind !== 'message' &&
+    kind !== 'message_dropped'
   ) {
     throw unreadable();
   }

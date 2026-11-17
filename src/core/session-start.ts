@@ -1,4 +1,5 @@
 import { appendEvent } from '@/core/append-event.ts';
+import { settleRecipientMail } from '@/core/delivery.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
 import { occupancyFor } from '@/core/session-caps.ts';
 import { reclaimCompensatedStart, stopCompensatedPlatform } from '@/core/session-compensate.ts';
@@ -268,6 +269,7 @@ async function compensateStart(
   session.token_hash = null;
   await tx.updateSession(session);
   await tx.voidEnrollmentCodes(session.id, now);
+  await settleRecipientMail(deps, tx, session.id);
   await tx.addOccupancy(session.workspace_id, session.group_id, occupancyFor(session.role, -1, 0));
   await appendEvent(deps, tx, {
     workspace_id: session.workspace_id,

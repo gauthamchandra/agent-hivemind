@@ -37,12 +37,10 @@ Rules for messages:
 
 ## Consequences
 
-Today the policy table lets every role send to one member, read messages, record a wait and escalate, and lets only the planner send to all. The prompt describes delivered messages. The platform port has a `send` operation and the capabilities `message_while_working` and `wake_on_message`. Nothing calls them.
+The policy table lets every role send to one member, read messages, record a wait and escalate, and lets only the planner send to all. The prompt describes delivered messages. The platform port has a `send` operation and the capabilities `message_while_working` and `wake_on_message`. The message routes, the commands, and the outbox call that operation. Sender and recipient must share a group.
 
-Still to build: a route and a command to send and read messages, delivery through the platform adapter, a check that sender and recipient share a group, a message event kind in the task history, and semantic routing. The event kind needs a forward migration.
-
-Two questions are open. A task history belongs to one task, so a message must be filed under the sender's task, the recipient's task, or both. And the prompt's fifth standing rule has a person's instruction relayed up to the session that started you, which forwards it down. That is a tree pattern and may need to change.
+Semantic routing is still to build. One question stays open. The prompt's fifth standing rule has a person's instruction relayed up to the session that started you, which forwards it down. That is a tree pattern and may need to change. The relay command follows that rule until it does.
 
 ## Rollout
 
-Not started.
+The routes, the commands, and delivery are in the service. Semantic routing is not.
