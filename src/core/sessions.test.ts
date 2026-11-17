@@ -1,5 +1,5 @@
-import { afterEach, expect, test } from 'bun:test';
-import { PGlite } from '@electric-sql/pglite';
+import { expect, test } from 'bun:test';
+import type { PGlite } from '@electric-sql/pglite';
 import type { ServiceDeps } from '@/core/deps.ts';
 import {
   createFirstAdministrator,
@@ -17,7 +17,6 @@ import { StoppedProcess } from '@/core/session-types.ts';
 import { createChildTask } from '@/core/task-records.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import {
-  createIds,
   defaultWorkspaceId,
   type GroupId,
   requireSessionId,
@@ -28,42 +27,27 @@ import {
 import { selfHostedGroupCaps } from '@/domain/model.ts';
 import { PlatformError } from '@/domain/platform.ts';
 import { sha256Hex } from '@/domain/secret.ts';
-import { createSimulatedPlatform } from '@/platform/simulated/adapter.ts';
-import { type ManualClock, manualClock } from '@/ports/clock.ts';
-import type { PlatformAdapter, Platforms, StartSessionInput } from '@/ports/platform.ts';
-import { systemRandom } from '@/ports/random.ts';
+import type { PlatformAdapter, StartSessionInput } from '@/ports/platform.ts';
 import type { UnitOfWork } from '@/ports/storage.ts';
-import { openPgliteStore } from '@/storage/postgres/store.ts';
+import { requirePresent } from '@/testing/assertions.ts';
+import { bootService, type Service } from '@/testing/boot.ts';
+import { checkoutGroup, note } from '@/testing/fixtures.ts';
+import {
+  createTestPlatforms,
+  enrollmentCodeIn,
+  promptMentioning,
+  replaceAdapter,
+} from '@/testing/platforms.ts';
+import { waitUntil } from '@/testing/wait.ts';
 
-export const note = 'Cited from the work that just finished.';
-const databases: PGlite[] = [];
-
-afterEach(async () => {
-  const open = databases.splice(0);
-
-  await Promise.all(open.map(db => db.close()));
-});
-
-export async function boot() {
-  const db = new PGlite();
-  databases.push(db);
-  await db.waitReady;
-  const clock = manualClock(new Date('2026-11-16T00:00:00.000Z'));
-  const store = openPgliteStore(db);
-  const deps: ServiceDeps = {
-    store,
-    clock,
-    random: systemRandom,
-    ids: createIds(clock, systemRandom),
-    responseKey: 'test-response-key',
-  };
-
-  await store.migrate();
+async function boot() {
+  const service = await bootService();
+  const { deps } = service;
   const installation = await openInstallation(deps);
-  const secret = installation.bootstrapSecret;
-
-  if (secret === null) throw new Error('the empty store should print a bootstrap key');
-
+  const secret = requirePresent(
+    installation.bootstrapSecret,
+    'the empty store should print a bootstrap key'
+  );
   const admin = await createFirstAdministrator(deps, {
     bootstrapSecret: secret,
     displayName: 'Ada',
@@ -76,33 +60,18 @@ export async function boot() {
     expiresAt: null,
   });
 
-  const connectionId = deps.ids.connection();
-  const simulated = createSimulatedPlatform(connectionId);
-  const platforms: Platforms = {
-    require(id) {
-      if (id !== connectionId) {
-        throw new HivemindError('not_found', 'No connection with that identifier exists.');
-      }
-
-      return { adapter: simulated.adapter, connection: simulated.connection() };
-    },
-  };
-
-  return { db, deps, platforms, connectionId, admin, simulated };
+  return { ...service, admin };
 }
 
-export async function withPlanner() {
+async function withPlanner() {
   const ctx = await boot();
   const opened = await openGroup(ctx.deps, ctx.platforms, {
     workspaceId: defaultWorkspaceId,
     personId: ctx.admin.id,
-    name: 'Checkout',
-    goal: 'Move tax calculation behind an interface.',
-    budget: '100',
+    ...checkoutGroup,
     connectionId: ctx.connectionId,
     verificationMode: 'before_merge',
     notes: [],
-    instructions: 'Plan the work.',
     idempotencyKey: 'open-group',
     bodyHash: 'open-group-body',
   });
@@ -111,20 +80,17 @@ export async function withPlanner() {
 
   if (opened.outcome !== 'live') throw new Error('planner did not start');
 
-  const token = ctx.simulated.secretFor(opened.session.id);
+  const token = requirePresent(
+    ctx.simulated.secretFor(opened.session.id),
+    'the planner should receive a secret'
+  );
 
-  expect(token).not.toBeNull();
-  expect(
-    ctx.simulated
-      .prompts()
-      .join('\n')
-      .includes(token ?? '')
-  ).toBe(false);
+  expect(ctx.simulated.prompts().join('\n')).not.toContain(token);
 
   return { ...ctx, opened, planner: opened.session };
 }
 
-export async function childTask(
+async function childTask(
   deps: ServiceDeps,
   groupId: GroupId,
   plannerId: SessionId,
@@ -160,7 +126,7 @@ export async function childTask(
   return created.task.id;
 }
 
-export async function setCaps(
+async function setCaps(
   db: PGlite,
   groupId: string,
   caps: typeof selfHostedGroupCaps
@@ -171,7 +137,7 @@ export async function setCaps(
   ]);
 }
 
-export function watchGroupAndTasks(tx: UnitOfWork, order: string[]): UnitOfWork {
+function watchGroupAndTasks(tx: UnitOfWork, order: string[]): UnitOfWork {
   return new Proxy(tx, {
     get(target, prop, receiver) {
       if (prop === 'lockGroup' || prop === 'lockTask') {
@@ -193,7 +159,7 @@ export function watchGroupAndTasks(tx: UnitOfWork, order: string[]): UnitOfWork 
   });
 }
 
-export function watchTaskIds(tx: UnitOfWork, order: string[]): UnitOfWork {
+function watchTaskIds(tx: UnitOfWork, order: string[]): UnitOfWork {
   return new Proxy(tx, {
     get(target, prop, receiver) {
       if (prop === 'lockTask') {
@@ -215,7 +181,7 @@ export function watchTaskIds(tx: UnitOfWork, order: string[]): UnitOfWork {
   });
 }
 
-export function watchLocks(tx: UnitOfWork, order: string[]): UnitOfWork {
+function watchLocks(tx: UnitOfWork, order: string[]): UnitOfWork {
   return new Proxy(tx, {
     get(target, prop, receiver) {
       if (prop === 'lockTask' || prop === 'lockSession') {
@@ -237,7 +203,7 @@ export function watchLocks(tx: UnitOfWork, order: string[]): UnitOfWork {
   });
 }
 
-export async function expectBalanced(
+async function expectBalanced(
   deps: ServiceDeps,
   workspaceId: WorkspaceId,
   groupId: GroupId,
@@ -453,9 +419,10 @@ test('a stop between start steps and end steps leaves places matching sessions',
   ).rejects.toBeInstanceOf(StoppedProcess);
 
   let sessions = await ctx.deps.store.sessions(defaultWorkspaceId, ctx.opened.group.id);
-  const reserved = sessions.find(session => session.role === 'implementer');
-
-  if (reserved === undefined) throw new Error('the reserved session should be stored');
+  const reserved = requirePresent(
+    sessions.find(session => session.role === 'implementer'),
+    'the reserved session should be stored'
+  );
 
   const compensated = await recoverStart(ctx.deps, ctx.platforms, {
     workspaceId: defaultWorkspaceId,
@@ -477,11 +444,10 @@ test('a stop between start steps and end steps leaves places matching sessions',
   ).rejects.toBeInstanceOf(StoppedProcess);
 
   sessions = await ctx.deps.store.sessions(defaultWorkspaceId, ctx.opened.group.id);
-  const accepted = sessions.find(
-    session => session.role === 'implementer' && session.life === 'starting'
+  const accepted = requirePresent(
+    sessions.find(session => session.role === 'implementer' && session.life === 'starting'),
+    'the accepted start should still be starting'
   );
-
-  if (accepted === undefined) throw new Error('the accepted start should still be starting');
 
   const live = await recoverStart(ctx.deps, ctx.platforms, {
     workspaceId: defaultWorkspaceId,
@@ -582,7 +548,7 @@ test('a late platform reference is stopped and its usage is read', async () => {
   const session = await ctx.deps.store.session(defaultWorkspaceId, reserved.id);
   const status = await ctx.simulated.adapter.readStatus(
     ctx.simulated.connection(),
-    session?.platform_session_ref ?? ''
+    platformRefOf(session)
   );
 
   expect(started.outcome).toBe('ended');
@@ -621,7 +587,7 @@ test('a failed late stop stays retryable from resume', async () => {
   const unfinished = await ctx.deps.store.session(defaultWorkspaceId, reserved.id);
   const stillRunning = await ctx.simulated.adapter.readStatus(
     ctx.simulated.connection(),
-    unfinished?.platform_session_ref ?? ''
+    platformRefOf(unfinished)
   );
 
   expect(unfinished?.life).toBe('ended');
@@ -637,7 +603,7 @@ test('a failed late stop stays retryable from resume', async () => {
   const group = await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id);
   const status = await ctx.simulated.adapter.readStatus(
     ctx.simulated.connection(),
-    resumed.platform_session_ref ?? ''
+    platformRefOf(resumed)
   );
 
   expect(resumed.final_usage_pending).toBe(false);
@@ -674,7 +640,7 @@ test('a repeated end stops a platform session before it clears pending usage', a
   const unfinished = await ctx.deps.store.session(defaultWorkspaceId, reserved.id);
   const stillRunning = await ctx.simulated.adapter.readStatus(
     ctx.simulated.connection(),
-    unfinished?.platform_session_ref ?? ''
+    platformRefOf(unfinished)
   );
 
   expect(unfinished?.final_usage_pending).toBe(true);
@@ -690,7 +656,7 @@ test('a repeated end stops a platform session before it clears pending usage', a
   });
   const status = await ctx.simulated.adapter.readStatus(
     ctx.simulated.connection(),
-    again.platform_session_ref ?? ''
+    platformRefOf(again)
   );
 
   expect(status.status).toBe('stopped');
@@ -700,7 +666,10 @@ test('a repeated end stops a platform session before it clears pending usage', a
 
 test('a prompt does not stop when an environment report cannot be sent', async () => {
   const ctx = await withPlanner();
-  const prompt = ctx.simulated.prompts()[0] ?? '';
+  const prompt = requirePresent(
+    ctx.simulated.prompts()[0],
+    'the platform should have been prompted'
+  );
 
   expect(prompt).not.toContain('If the report fails, stop');
   expect(prompt).not.toContain('do not report completion');
@@ -957,11 +926,12 @@ test('completing a start after an end intent stops the platform session', async 
     })
   ).rejects.toBeInstanceOf(StoppedProcess);
 
-  const starting = (await ctx.deps.store.sessions(defaultWorkspaceId, ctx.opened.group.id)).find(
-    session => session.role === 'implementer'
+  const starting = requirePresent(
+    (await ctx.deps.store.sessions(defaultWorkspaceId, ctx.opened.group.id)).find(
+      session => session.role === 'implementer'
+    ),
+    'the implementer should be stored'
   );
-
-  if (starting === undefined) throw new Error('the implementer should be stored');
 
   await expect(
     endSession(ctx.deps, ctx.platforms, {
@@ -1046,7 +1016,7 @@ test('a replay of a failed start stops the platform session that is still runnin
   const settled = await ctx.deps.store.session(defaultWorkspaceId, reserved.id);
   const status = await ctx.simulated.adapter.readStatus(
     ctx.simulated.connection(),
-    settled?.platform_session_ref ?? ''
+    platformRefOf(settled)
   );
 
   expect(replay.outcome).toBe('refused');
@@ -1123,7 +1093,7 @@ test('a replay of an ended start stops a platform session that appears later', a
 
   const status = await ctx.simulated.adapter.readStatus(
     ctx.simulated.connection(),
-    replay.session.platform_session_ref ?? ''
+    platformRefOf(replay.session)
   );
 
   expect(status.status).toBe('stopped');
@@ -1257,7 +1227,7 @@ test('a retry stays pending while the first start is still in flight', async () 
   const started = await first;
   const sent = await ctx.simulated.adapter.send(
     ctx.simulated.connection(),
-    started.session.platform_session_ref ?? '',
+    platformRefOf(started.session),
     'still running'
   );
 
@@ -1416,11 +1386,7 @@ test('an ended row stops a platform session that appears later', async () => {
   expect(again.usage).toBe('4');
   expect(group?.spend).toBe('4');
   expect(
-    await ctx.simulated.adapter.send(
-      ctx.simulated.connection(),
-      again.platform_session_ref ?? '',
-      'ping'
-    )
+    await ctx.simulated.adapter.send(ctx.simulated.connection(), platformRefOf(again), 'ping')
   ).toBe('gone');
 });
 test('a failed stop of a late platform session stays pending', async () => {
@@ -1445,10 +1411,7 @@ test('a failed stop of a late platform session stays pending', async () => {
   expect(pending?.platform_session_ref).not.toBeNull();
   expect(pending?.final_usage_pending).toBe(true);
   expect(
-    await ctx.simulated.adapter.readStatus(
-      ctx.simulated.connection(),
-      pending?.platform_session_ref ?? ''
-    )
+    await ctx.simulated.adapter.readStatus(ctx.simulated.connection(), platformRefOf(pending))
   ).toEqual({ status: 'working' });
 });
 test('a failed usage read of a late platform session stays pending', async () => {
@@ -1531,28 +1494,19 @@ test('an unavailable start does not report pending after the session has ended',
     ctx.planner.id,
     'End during silence'
   );
-  const platforms: Platforms = {
-    require(id) {
-      const handle = ctx.platforms.require(id);
-
-      return {
-        connection: handle.connection,
-        adapter: {
-          ...handle.adapter,
-          start(_connection, input: StartSessionInput) {
-            return endSession(ctx.deps, ctx.platforms, {
-              workspaceId: defaultWorkspaceId,
-              sessionId: input.tags.sessionId as SessionId,
-              actor: { kind: 'session', sessionId: ctx.planner.id },
-              reason: 'Stop the start that has not answered.',
-            }).then(() => {
-              throw new PlatformError('unavailable', 'The platform did not answer.');
-            });
-          },
-        },
-      };
+  const platforms = createTestPlatforms(ctx.connectionId, ctx.simulated, {
+    ...ctx.simulated.adapter,
+    start(_connection, input: StartSessionInput) {
+      return endSession(ctx.deps, ctx.platforms, {
+        workspaceId: defaultWorkspaceId,
+        sessionId: input.tags.sessionId as SessionId,
+        actor: { kind: 'session', sessionId: ctx.planner.id },
+        reason: 'Stop the start that has not answered.',
+      }).then(() => {
+        throw new PlatformError('unavailable', 'The platform did not answer.');
+      });
     },
-  };
+  });
   const result = await startSession(ctx.deps, platforms, {
     workspaceId: defaultWorkspaceId,
     groupId: ctx.opened.group.id,
@@ -1586,10 +1540,8 @@ test('five wrong enrollment codes void the code', async () => {
     idempotencyKey: 'cutoff-group',
     bodyHash: 'cutoff-group',
   });
-  const prompt = ctx.simulated.prompts().find(text => text.includes(opened.session.id)) ?? '';
-  const code = /Enrollment code: (enr_[A-Za-z0-9_-]+)/.exec(prompt)?.[1];
-
-  if (code === undefined) throw new Error('the prompt should carry an enrollment code');
+  const prompt = promptMentioning(ctx.simulated, opened.session.id);
+  const code = enrollmentCodeIn(prompt);
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     await expect(
@@ -1633,10 +1585,8 @@ test('a repeated enrollment returns the same token', async () => {
     idempotencyKey: 'enroll-group',
     bodyHash: 'enroll-group',
   });
-  const prompt = ctx.simulated.prompts().find(text => text.includes(opened.session.id)) ?? '';
-  const code = /Enrollment code: (enr_[A-Za-z0-9_-]+)/.exec(prompt)?.[1];
-
-  if (code === undefined) throw new Error('the prompt should carry an enrollment code');
+  const prompt = promptMentioning(ctx.simulated, opened.session.id);
+  const code = enrollmentCodeIn(prompt);
 
   const input = {
     sessionId: opened.session.id,
@@ -1681,11 +1631,12 @@ test('an ended start the platform does not know releases its place', async () =>
     })
   ).rejects.toBeInstanceOf(StoppedProcess);
 
-  const starting = (await ctx.deps.store.sessions(defaultWorkspaceId, ctx.opened.group.id)).find(
-    session => session.role === 'implementer'
+  const starting = requirePresent(
+    (await ctx.deps.store.sessions(defaultWorkspaceId, ctx.opened.group.id)).find(
+      session => session.role === 'implementer'
+    ),
+    'the implementer should be stored'
   );
-
-  if (starting === undefined) throw new Error('the implementer should be stored');
 
   await expect(
     endSession(ctx.deps, ctx.platforms, {
@@ -1851,7 +1802,7 @@ test('a child transition locks the root before the child', async () => {
 });
 test('only pull-request roles see the changeset', async () => {
   const ctx = await withPlanner();
-  const planner = ctx.simulated.prompts().find(text => text.includes(ctx.planner.id)) ?? '';
+  const planner = promptMentioning(ctx.simulated, ctx.planner.id);
   const taskId = await childTask(ctx.deps, ctx.opened.group.id, ctx.planner.id, 'Write the change');
 
   await startSession(ctx.deps, ctx.platforms, {
@@ -1866,7 +1817,10 @@ test('only pull-request roles see the changeset', async () => {
     replacementOf: null,
   });
 
-  const writer = ctx.simulated.prompts().at(-1) ?? '';
+  const writer = requirePresent(
+    ctx.simulated.prompts().at(-1),
+    'the platform should have been prompted'
+  );
 
   expect(planner).toContain('You are the planner');
   expect(planner).not.toContain('Changeset:');
@@ -1891,8 +1845,8 @@ test('an enrollment prompt names the enroll flags and not the token', async () =
     idempotencyKey: 'prompt-group',
     bodyHash: 'prompt-group',
   });
-  const prompt = ctx.simulated.prompts().find(text => text.includes(opened.session.id)) ?? '';
-  const code = /Enrollment code: (enr_[A-Za-z0-9_-]+)/.exec(prompt)?.[1] ?? '';
+  const prompt = promptMentioning(ctx.simulated, opened.session.id);
+  const code = enrollmentCodeIn(prompt);
 
   expect(prompt).toContain(`hivemind enroll --session ${opened.session.id} --code ${code}`);
   expect(prompt.includes('ses_')).toBe(prompt.includes(opened.session.id));
@@ -2289,7 +2243,10 @@ test('a refused start does not spend a replacement', async () => {
     bodyHash: 'first-writer',
     replacementOf: null,
   });
-  const prompt = ctx.simulated.prompts().at(-1) ?? '';
+  const prompt = requirePresent(
+    ctx.simulated.prompts().at(-1),
+    'the platform should have been prompted'
+  );
 
   expect(refused.outcome).toBe('refused');
   expect(refused.session.attempt).toBe(1);
@@ -2614,7 +2571,16 @@ test('an edit uses the same character limit as creation', async () => {
   });
 });
 
-function holdFind(ctx: Awaited<ReturnType<typeof boot>>): {
+function platformRefOf(
+  session: { platform_session_ref: string | null } | null | undefined
+): string {
+  return requirePresent(
+    session?.platform_session_ref,
+    'the session should have a platform reference'
+  );
+}
+
+function holdFind(ctx: Service): {
   entered: Promise<void>;
   release: () => void;
   ended: string[];
@@ -2644,20 +2610,17 @@ function holdFind(ctx: Awaited<ReturnType<typeof boot>>): {
     },
   };
 
-  ctx.platforms.require = id => {
-    if (id !== ctx.connectionId) {
-      throw new HivemindError('not_found', 'No connection with that identifier exists.');
-    }
-
-    return { adapter, connection: ctx.simulated.connection() };
-  };
+  replaceAdapter(ctx, adapter);
 
   return { entered, release, ended };
 }
 
 test('a prompt does not name a command this phase does not have', async () => {
   const ctx = await withPlanner();
-  const prompt = ctx.simulated.prompts()[0] ?? '';
+  const prompt = requirePresent(
+    ctx.simulated.prompts()[0],
+    'the platform should have been prompted'
+  );
 
   expect(prompt).not.toContain('escalate command');
   expect(prompt).not.toContain(
@@ -2693,7 +2656,7 @@ test('a failed cleanup of a late start stays retryable', async () => {
   const unfinished = await ctx.deps.store.session(defaultWorkspaceId, reserved.id);
   const stillRunning = await ctx.simulated.adapter.readStatus(
     ctx.simulated.connection(),
-    unfinished?.platform_session_ref ?? ''
+    platformRefOf(unfinished)
   );
 
   expect(unfinished?.life).toBe('start_failed');
@@ -2711,7 +2674,7 @@ test('a failed cleanup of a late start stays retryable', async () => {
   const occupancy = await ctx.deps.store.occupancy(defaultWorkspaceId, ctx.opened.group.id);
   const status = await ctx.simulated.adapter.readStatus(
     ctx.simulated.connection(),
-    recovered.platform_session_ref ?? ''
+    platformRefOf(recovered)
   );
 
   expect(recovered.life).toBe('start_failed');
@@ -2789,7 +2752,7 @@ test('ending a compensated start retries the stop once', async () => {
   const unfinished = await ctx.deps.store.session(defaultWorkspaceId, reserved.id);
   const stillRunning = await ctx.simulated.adapter.readStatus(
     ctx.simulated.connection(),
-    unfinished?.platform_session_ref ?? ''
+    platformRefOf(unfinished)
   );
 
   expect(unfinished?.life).toBe('start_failed');
@@ -2808,7 +2771,7 @@ test('ending a compensated start retries the stop once', async () => {
   const endsAfterStop = ctx.simulated.calls().filter(call => call === 'end').length;
   const status = await ctx.simulated.adapter.readStatus(
     ctx.simulated.connection(),
-    stopped.platform_session_ref ?? ''
+    platformRefOf(stopped)
   );
   const group = await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id);
   const occupancy = await ctx.deps.store.occupancy(defaultWorkspaceId, ctx.opened.group.id);
@@ -3129,23 +3092,14 @@ test('recovery stops a reference attached to a compensated start', async () => {
   });
   const real = ctx.simulated.adapter;
 
-  ctx.platforms.require = id => {
-    if (id !== ctx.connectionId) {
-      throw new HivemindError('not_found', 'No connection with that identifier exists.');
-    }
+  replaceAdapter(ctx, {
+    ...real,
+    async findByKey(connection, key, startedAt) {
+      await gate;
 
-    return {
-      adapter: {
-        ...real,
-        async findByKey(connection, key, startedAt) {
-          await gate;
-
-          return real.findByKey(connection, key, startedAt);
-        },
-      },
-      connection: ctx.simulated.connection(),
-    };
-  };
+      return real.findByKey(connection, key, startedAt);
+    },
+  });
 
   const recovery = recoverStart(ctx.deps, ctx.platforms, {
     workspaceId: defaultWorkspaceId,
@@ -3196,23 +3150,14 @@ test('a failed stop of a reference attached during recovery stays retryable', as
   });
   const real = ctx.simulated.adapter;
 
-  ctx.platforms.require = id => {
-    if (id !== ctx.connectionId) {
-      throw new HivemindError('not_found', 'No connection with that identifier exists.');
-    }
+  replaceAdapter(ctx, {
+    ...real,
+    async findByKey(connection, key, startedAt) {
+      await gate;
 
-    return {
-      adapter: {
-        ...real,
-        async findByKey(connection, key, startedAt) {
-          await gate;
-
-          return real.findByKey(connection, key, startedAt);
-        },
-      },
-      connection: ctx.simulated.connection(),
-    };
-  };
+      return real.findByKey(connection, key, startedAt);
+    },
+  });
   ctx.simulated.queueError('end', 'unavailable');
 
   const recovery = recoverStart(ctx.deps, ctx.platforms, {
@@ -3254,24 +3199,15 @@ test('an enrollment code expires from the moment it is created', async () => {
   let captured = '';
   const real = ctx.simulated.adapter;
 
-  ctx.platforms.require = id => {
-    if (id !== ctx.connectionId) {
-      throw new HivemindError('not_found', 'No connection with that identifier exists.');
-    }
+  replaceAdapter(ctx, {
+    ...real,
+    async start(connection, input) {
+      captured = input.prompt;
+      await gate;
 
-    return {
-      adapter: {
-        ...real,
-        async start(connection, input) {
-          captured = input.prompt;
-          await gate;
-
-          return real.start(connection, input);
-        },
-      },
-      connection: ctx.simulated.connection(),
-    };
-  };
+      return real.start(connection, input);
+    },
+  });
 
   const opening = openGroup(ctx.deps, ctx.platforms, {
     workspaceId: defaultWorkspaceId,
@@ -3287,9 +3223,7 @@ test('an enrollment code expires from the moment it is created', async () => {
     bodyHash: 'expiry-group',
   });
 
-  for (let attempt = 0; attempt < 50 && captured === ''; attempt += 1) {
-    await new Promise(resolve => setTimeout(resolve, 10));
-  }
+  await waitUntil(() => (captured === '' ? null : captured), 'the start to receive its prompt');
 
   const matched = /enroll --session (\S+) --code (enr_[A-Za-z0-9_-]+)/.exec(captured);
   const sessionId = matched === null ? undefined : requireSessionId(matched[1] ?? '');
@@ -3306,7 +3240,7 @@ test('an enrollment code expires from the moment it is created', async () => {
     15 * 60 * 1000
   );
 
-  advanceClock(ctx.deps.clock, 15 * 60 * 1000);
+  ctx.deps.clock.advance(15 * 60 * 1000);
 
   await expect(
     enroll(ctx.deps, {
@@ -3366,10 +3300,8 @@ test('an ended session and a refused start do not keep an enrollment code', asyn
     idempotencyKey: 'ended-code-group',
     bodyHash: 'ended-code-group',
   });
-  const prompt = ctx.simulated.prompts().find(text => text.includes(opened.session.id)) ?? '';
-  const code = /Enrollment code: (enr_[A-Za-z0-9_-]+)/.exec(prompt)?.[1];
-
-  if (code === undefined) throw new Error('the prompt should carry an enrollment code');
+  const prompt = promptMentioning(ctx.simulated, opened.session.id);
+  const code = enrollmentCodeIn(prompt);
 
   await endSession(ctx.deps, ctx.platforms, {
     workspaceId: defaultWorkspaceId,
@@ -3414,10 +3346,7 @@ test('an ended session and a refused start do not keep an enrollment code', asyn
   expect(refusedCode).toBeNull();
 });
 
-function holdPlatform(
-  ctx: Awaited<ReturnType<typeof boot>>,
-  options?: { failEnds: number }
-): { release: () => void } {
+function holdPlatform(ctx: Service, options?: { failEnds: number }): { release: () => void } {
   let release = (): void => {};
   const gate = new Promise<void>(resolve => {
     release = resolve;
@@ -3449,13 +3378,7 @@ function holdPlatform(
     },
   };
 
-  ctx.platforms.require = id => {
-    if (id !== ctx.connectionId) {
-      throw new HivemindError('not_found', 'No connection with that identifier exists.');
-    }
-
-    return { adapter, connection: ctx.simulated.connection() };
-  };
+  replaceAdapter(ctx, adapter);
 
   return { release };
 }
@@ -3482,11 +3405,10 @@ async function endedBeforePlatformAccept(
   ).rejects.toBeInstanceOf(StoppedProcess);
 
   const sessions = await ctx.deps.store.sessions(defaultWorkspaceId, ctx.opened.group.id);
-  const reserved = sessions.find(
-    session => session.role === 'implementer' && session.life === 'starting'
+  const reserved = requirePresent(
+    sessions.find(session => session.role === 'implementer' && session.life === 'starting'),
+    'the reserved session should exist'
   );
-
-  if (reserved === undefined) throw new Error('the reserved session should exist');
 
   const ended = await endSession(ctx.deps, ctx.platforms, {
     workspaceId: defaultWorkspaceId,
@@ -3506,9 +3428,10 @@ async function acceptAfterEnd(
   ctx: Awaited<ReturnType<typeof withPlanner>>,
   reserved: { id: SessionId; title: string }
 ): Promise<void> {
-  const group = await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id);
-
-  if (group === null) throw new Error('the group should exist');
+  const group = requirePresent(
+    await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id),
+    'the group should exist'
+  );
 
   await ctx.simulated.adapter.start(ctx.simulated.connection(), {
     prompt: 'The platform accepted after the row ended.',
@@ -3527,27 +3450,14 @@ async function acceptAfterEnd(
   });
 }
 
-function advanceClock(clock: { now(): Date }, milliseconds: number): void {
-  if (!('advance' in clock) || typeof clock.advance !== 'function') {
-    throw new Error('the test clock cannot move');
-  }
-
-  (clock as ManualClock).advance(milliseconds);
-}
-
-async function waitForRole(
+function waitForRole(
   deps: ServiceDeps,
   groupId: GroupId,
   role: 'implementer'
 ): Promise<{ id: SessionId }> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  return waitUntil(async () => {
     const sessions = await deps.store.sessions(defaultWorkspaceId, groupId);
-    const found = sessions.find(session => session.role === role && session.life === 'starting');
 
-    if (found !== undefined) return found;
-
-    await new Promise(resolve => setTimeout(resolve, 10));
-  }
-
-  throw new Error('the start did not reserve a session');
+    return sessions.find(session => session.role === role && session.life === 'starting');
+  }, `the ${role} start to reserve a session`);
 }

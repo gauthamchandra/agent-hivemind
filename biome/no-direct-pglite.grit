@@ -1,0 +1,8 @@
+language js
+
+or {
+  `new PGlite($args)`,
+  `new PGlite()`
+} as $construction where {
+  register_diagnostic(span=$construction, message="Open databases through @/testing/pglite.ts so they restore from the migrated snapshot and close after the test. Only src/index.ts creates the product database.", severity="error")
+}

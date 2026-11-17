@@ -17,6 +17,7 @@ import { manualClock } from '@/ports/clock.ts';
 import type { Platforms } from '@/ports/platform.ts';
 import { systemRandom } from '@/ports/random.ts';
 import { openPostgresStore } from '@/storage/postgres/postgres.ts';
+import { testResponseKey } from '@/testing/deps.ts';
 
 const databaseUrl = process.env.HIVEMIND_POSTGRES_URL;
 
@@ -36,7 +37,7 @@ test.skipIf(databaseUrl === undefined)(
       clock,
       random: systemRandom,
       ids: createIds(clock, systemRandom),
-      responseKey: 'test-response-key',
+      responseKey: testResponseKey,
     };
     const installation = await openInstallation(deps);
     const secret = installation.bootstrapSecret;

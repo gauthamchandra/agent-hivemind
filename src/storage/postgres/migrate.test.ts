@@ -1,13 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
 import {
   applyMigrations,
   type ExecuteSql,
   executePglite,
   executePostgres,
 } from '@/storage/postgres/migrate.ts';
+import { openEmptyDatabase } from '@/testing/pglite.ts';
 
 async function appliedNames(db: PGlite): Promise<string[]> {
   const result = await db.query<{ name: string }>(
@@ -35,45 +36,40 @@ async function migrationFiles(): Promise<string[]> {
 }
 
 async function expectAppliedOnce(execute: (db: PGlite) => ExecuteSql): Promise<void> {
-  const db = new PGlite();
-  await db.waitReady;
+  const db = await openEmptyDatabase();
   const run = execute(db);
   const files = await migrationFiles();
 
-  try {
-    await applyMigrations(run);
+  await applyMigrations(run);
 
-    expect(await appliedNames(db)).toEqual(files);
-    expect(await publicTable(db, 'workspaces')).toBe(1);
-    expect(await publicTable(db, 'migrations')).toBe(0);
+  expect(await appliedNames(db)).toEqual(files);
+  expect(await publicTable(db, 'workspaces')).toBe(1);
+  expect(await publicTable(db, 'migrations')).toBe(0);
 
-    const drizzle = await db.query<{ count: number }>(
-      `SELECT count(*)::int AS count
-       FROM information_schema.schemata
-       WHERE schema_name = 'drizzle'`
-    );
+  const drizzle = await db.query<{ count: number }>(
+    `SELECT count(*)::int AS count
+     FROM information_schema.schemata
+     WHERE schema_name = 'drizzle'`
+  );
 
-    expect(drizzle.rows[0]?.count).toBe(0);
+  expect(drizzle.rows[0]?.count).toBe(0);
 
-    await applyMigrations(run);
+  await applyMigrations(run);
 
-    expect(await appliedNames(db)).toEqual(files);
+  expect(await appliedNames(db)).toEqual(files);
 
-    const workspaces = await db.query<{ count: number }>(
-      'SELECT count(*)::int AS count FROM workspaces'
-    );
+  const workspaces = await db.query<{ count: number }>(
+    'SELECT count(*)::int AS count FROM workspaces'
+  );
 
-    expect(workspaces.rows[0]?.count).toBe(0);
+  expect(workspaces.rows[0]?.count).toBe(0);
 
-    const spawn = await db.query<{ name: string }>(
-      `SELECT indexname AS name FROM pg_indexes
-       WHERE tablename = 'spawn_log' AND indexname = 'spawn_log_group_at'`
-    );
+  const spawn = await db.query<{ name: string }>(
+    `SELECT indexname AS name FROM pg_indexes
+     WHERE tablename = 'spawn_log' AND indexname = 'spawn_log_group_at'`
+  );
 
-    expect(spawn.rows).toHaveLength(1);
-  } finally {
-    await db.close();
-  }
+  expect(spawn.rows).toHaveLength(1);
 }
 
 describe('sql migrations', () => {

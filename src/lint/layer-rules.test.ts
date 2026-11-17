@@ -13,6 +13,8 @@ const forwardMigration = new URL(
   '../storage/postgres/forward-migration.fixture.ts',
   import.meta.url
 );
+const directDatabase = new URL('../storage/postgres/direct-database.fixture.ts', import.meta.url);
+const sharedDatabase = new URL('../storage/postgres/shared-database.fixture.ts', import.meta.url);
 
 async function check(path: URL): Promise<{ code: number; output: string }> {
   const proc = Bun.spawn([biome, 'check', '--error-on-warnings', fileURLToPath(path)], {
@@ -42,9 +44,11 @@ describe('biome layer rules', () => {
     );
 
     try {
-      const imported = await check(forbiddenImport);
-      const named = await check(platformName);
-      const title = await check(groupTitle);
+      const [imported, named, title] = await Promise.all([
+        check(forbiddenImport),
+        check(platformName),
+        check(groupTitle),
+      ]);
 
       expect(imported.code).not.toBe(0);
       expect(imported.output).toContain('noRestrictedImports');
@@ -84,8 +88,10 @@ describe('biome layer rules', () => {
     );
 
     try {
-      const reversed = await check(downMigration);
-      const forward = await check(forwardMigration);
+      const [reversed, forward] = await Promise.all([
+        check(downMigration),
+        check(forwardMigration),
+      ]);
 
       expect(reversed.code).not.toBe(0);
       expect(reversed.output.match(/Migrations are forward only/g)?.length).toBe(2);
@@ -95,6 +101,38 @@ describe('biome layer rules', () => {
       await Promise.all([
         unlink(downMigration).catch(() => undefined),
         unlink(forwardMigration).catch(() => undefined),
+      ]);
+    }
+  });
+
+  test('a direct PGlite construction fails, and the shared test helper does not', async () => {
+    await Bun.write(
+      directDatabase,
+      `import { PGlite } from '@electric-sql/pglite';
+
+export const empty = new PGlite();
+export const loaded = new PGlite({ loadDataDir: new Blob() });
+`
+    );
+    await Bun.write(
+      sharedDatabase,
+      `import { openMigratedDatabase } from '@/testing/pglite.ts';
+
+export const database = openMigratedDatabase();
+`
+    );
+
+    try {
+      const [direct, shared] = await Promise.all([check(directDatabase), check(sharedDatabase)]);
+
+      expect(direct.code).not.toBe(0);
+      expect(direct.output.match(/Open databases through @\/testing\/pglite\.ts/g)?.length).toBe(2);
+      expect(shared.code).toBe(0);
+      expect(shared.output).not.toContain('Open databases through');
+    } finally {
+      await Promise.all([
+        unlink(directDatabase).catch(() => undefined),
+        unlink(sharedDatabase).catch(() => undefined),
       ]);
     }
   });

@@ -1,150 +1,63 @@
-import { afterEach, expect, test } from 'bun:test';
-import { PGlite } from '@electric-sql/pglite';
-import type { ServiceDeps } from '@/core/deps.ts';
-import { openInstallation } from '@/core/installation.ts';
-import { HivemindError } from '@/domain/errors.ts';
-import { createIds, defaultWorkspaceId, requireGroupId, requireSessionId } from '@/domain/ids.ts';
-import { startHttp } from '@/http/server.ts';
-import { createSimulatedPlatform } from '@/platform/simulated/adapter.ts';
-import { manualClock } from '@/ports/clock.ts';
-import type { Platforms } from '@/ports/platform.ts';
-import { systemRandom } from '@/ports/random.ts';
-import { openPgliteStore } from '@/storage/postgres/store.ts';
+import { expect, test } from 'bun:test';
+import { defaultWorkspaceId, requireGroupId, requireSessionId } from '@/domain/ids.ts';
+import { requirePresent } from '@/testing/assertions.ts';
+import { bootHttpService, type HttpService } from '@/testing/boot.ts';
+import { passingCheckEvidence, pullRequestEvidence } from '@/testing/fixtures.ts';
+import {
+  bearer,
+  bootstrapCreatorKey,
+  createCheckoutGroup,
+  expectStatus,
+  sendJson,
+} from '@/testing/http.ts';
+import { enrollmentCodeIn, promptMentioning } from '@/testing/platforms.ts';
 
-export const address = [
-  { label: 'pull request', kind: 'address', value: 'https://example.com/pr/1' },
-];
-export const check = [{ label: 'check', kind: 'text', value: 'the suite passed' }];
-const databases: PGlite[] = [];
-
-afterEach(async () => {
-  const open = databases.splice(0);
-
-  await Promise.all(open.map(db => db.close()));
-});
-
-export async function boot(options?: { secretInjection?: boolean }) {
-  const db = new PGlite();
-  databases.push(db);
-  await db.waitReady;
-  const clock = manualClock(new Date('2026-11-16T00:00:00.000Z'));
-  const store = openPgliteStore(db);
-  const deps: ServiceDeps = {
-    store,
-    clock,
-    random: systemRandom,
-    ids: createIds(clock, systemRandom),
-    responseKey: 'test-response-key',
-  };
-
-  await store.migrate();
-  const installation = await openInstallation(deps);
-  const connectionId = deps.ids.connection();
-  const simulated = createSimulatedPlatform(connectionId);
-
-  if (options?.secretInjection === false) simulated.drop('secret_injection');
-
-  const platforms: Platforms = {
-    require(id) {
-      if (id !== connectionId) {
-        throw new HivemindError('not_found', 'No connection with that identifier exists.');
-      }
-
-      return { adapter: simulated.adapter, connection: simulated.connection() };
-    },
-  };
-  const server = await startHttp({ deps, platforms, connectionId });
-
-  return { db, deps, simulated, server, bootstrap: installation.bootstrapSecret };
-}
-
-export async function json(
-  server: { url: string },
-  method: string,
-  path: string,
-  body?: unknown,
-  headers?: Record<string, string>
-): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await fetch(`${server.url}${path}`, {
-    method,
-    headers: {
-      'content-type': 'application/json',
-      ...headers,
-    },
-    body: body === undefined ? null : JSON.stringify(body),
-  });
-  const parsed = (await response.json()) as Record<string, unknown>;
-
-  return { status: response.status, body: parsed };
-}
-
-export function errorCode(body: Record<string, unknown>): string {
+function errorCode(body: Record<string, unknown>): string {
   const error = body.error as { code?: string } | undefined;
 
   return error?.code ?? '';
 }
 
-export async function creatorKey(ctx: Awaited<ReturnType<typeof boot>>): Promise<string> {
-  const admin = await json(
-    ctx.server,
-    'POST',
-    '/v1/bootstrap/administrator',
-    { display_name: 'Ada' },
-    { authorization: `Bearer ${ctx.bootstrap}` }
-  );
-
-  expect(admin.status).toBe(201);
-
-  const key = await json(
-    ctx.server,
-    'POST',
-    '/v1/bootstrap/keys',
-    { name: 'creator', role: 'creator' },
-    { authorization: `Bearer ${ctx.bootstrap}` }
-  );
-
-  expect(key.status).toBe(201);
-
-  return String(key.body.secret);
+async function creatorKey(ctx: HttpService): Promise<string> {
+  return bootstrapCreatorKey(ctx.server, ctx.bootstrap);
 }
 
 test('a numeric key expiry is refused', async () => {
-  const ctx = await boot();
-  const created = await json(
+  const ctx = await bootHttpService();
+  const created = await sendJson(
     ctx.server,
     'POST',
     '/v1/bootstrap/administrator',
     { display_name: 'Ada' },
-    { authorization: `Bearer ${ctx.bootstrap}` }
+    bearer(ctx.bootstrap)
   );
 
-  expect(created.status).toBe(201);
+  expectStatus(created, 201);
 
-  const refused = await json(
+  const refused = await sendJson(
     ctx.server,
     'POST',
     '/v1/bootstrap/keys',
     { name: 'creator', role: 'creator', expires_at: 1 },
-    { authorization: `Bearer ${ctx.bootstrap}` }
+    bearer(ctx.bootstrap)
   );
-  const absent = await json(
+  const absent = await sendJson(
     ctx.server,
     'POST',
     '/v1/bootstrap/keys',
     { name: 'later', role: 'creator', expires_at: null },
-    { authorization: `Bearer ${ctx.bootstrap}` }
+    bearer(ctx.bootstrap)
   );
 
-  expect(refused.status).toBe(422);
+  expectStatus(refused, 422);
   expect(errorCode(refused.body)).toBe('validation_failed');
-  expect(absent.status).toBe(201);
+  expectStatus(absent, 201);
   expect(typeof absent.body.secret).toBe('string');
-  ctx.server.stop();
 });
 
 test('a lowercase bearer scheme is accepted', async () => {
-  const ctx = await boot();
-  const created = await json(
+  const ctx = await bootHttpService();
+  const created = await sendJson(
     ctx.server,
     'POST',
     '/v1/bootstrap/administrator',
@@ -152,12 +65,11 @@ test('a lowercase bearer scheme is accepted', async () => {
     { authorization: `bearer ${ctx.bootstrap}` }
   );
 
-  expect(created.status).toBe(201);
-  ctx.server.stop();
+  expectStatus(created, 201);
 });
 
 test('a body over 256 KiB is refused before it is handled', async () => {
-  const ctx = await boot();
+  const ctx = await bootHttpService();
   const response = await fetch(`${ctx.server.url}/healthz`, {
     method: 'POST',
     body: 'x'.repeat(256 * 1024 + 1),
@@ -165,19 +77,12 @@ test('a body over 256 KiB is refused before it is handled', async () => {
 
   expect(response.status).toBe(413);
   expect(await response.text()).toBe('');
-  ctx.server.stop();
 });
 
-export async function enrollFromPrompt(
-  ctx: Awaited<ReturnType<typeof boot>>,
-  sessionId: string
-): Promise<string> {
-  const prompt = ctx.simulated.prompts().find(text => text.includes(sessionId)) ?? '';
-  const code = /Enrollment code: (enr_[A-Za-z0-9_-]+)/.exec(prompt)?.[1];
+async function enrollFromPrompt(ctx: HttpService, sessionId: string): Promise<string> {
+  const code = enrollmentCodeIn(promptMentioning(ctx.simulated, sessionId));
 
-  if (code === undefined) throw new Error(`no enrollment code for ${sessionId}`);
-
-  const response = await json(
+  const response = await sendJson(
     ctx.server,
     'POST',
     '/v1/session/enroll',
@@ -188,33 +93,33 @@ export async function enrollFromPrompt(
     { 'idempotency-key': `enroll-${sessionId}` }
   );
 
-  expect(response.status).toBe(200);
+  expectStatus(response, 200);
 
   return String(response.body.token);
 }
 
-export async function startMember(
-  ctx: Awaited<ReturnType<typeof boot>>,
+async function startMember(
+  ctx: HttpService,
   token: string,
   role: string,
   taskId: string,
   instructions: string
 ): Promise<{ id: string }> {
-  const response = await json(
+  const response = await sendJson(
     ctx.server,
     'POST',
     '/v1/sessions',
     { role, task_id: taskId, instructions },
-    { authorization: `Bearer ${token}`, 'idempotency-key': `${role}-${taskId}` }
+    { ...bearer(token), 'idempotency-key': `${role}-${taskId}` }
   );
 
-  expect(response.status).toBe(201);
+  expectStatus(response, 201);
 
   return response.body.session as { id: string };
 }
 
-export async function move(
-  ctx: Awaited<ReturnType<typeof boot>>,
+async function move(
+  ctx: HttpService,
   token: string,
   taskId: string,
   to: string,
@@ -223,35 +128,35 @@ export async function move(
   evidence: { label: string; kind: string; value: string }[] = []
 ): Promise<void> {
   const current = version ?? (await taskOf(ctx, token, taskId)).version;
-  const response = await json(
+  const response = await sendJson(
     ctx.server,
     'POST',
     `/v1/tasks/${taskId}/transitions`,
     { to, expected_version: current, note, evidence },
-    { authorization: `Bearer ${token}`, 'idempotency-key': `${taskId}-${to}-${current}` }
+    { ...bearer(token), 'idempotency-key': `${taskId}-${to}-${current}` }
   );
 
-  expect(response.status).toBe(200);
+  expectStatus(response, 200);
 }
 
-export async function taskOf(
-  ctx: Awaited<ReturnType<typeof boot>>,
+async function taskOf(
+  ctx: HttpService,
   token: string,
   taskId: string
 ): Promise<{ id: string; version: number; state: string }> {
-  const response = await json(ctx.server, 'GET', `/v1/tasks/${taskId}`, undefined, {
-    authorization: `Bearer ${token}`,
+  const response = await sendJson(ctx.server, 'GET', `/v1/tasks/${taskId}`, undefined, {
+    ...bearer(token),
   });
 
   return response.body.task as { id: string; version: number; state: string };
 }
 
-export async function rootTask(
-  ctx: Awaited<ReturnType<typeof boot>>,
+async function rootTask(
+  ctx: HttpService,
   token: string
 ): Promise<{ id: string; version: number; state: string }> {
-  const response = await json(ctx.server, 'GET', '/v1/tasks', undefined, {
-    authorization: `Bearer ${token}`,
+  const response = await sendJson(ctx.server, 'GET', '/v1/tasks', undefined, {
+    ...bearer(token),
   });
   const tasks = response.body.tasks as {
     id: string;
@@ -259,15 +164,16 @@ export async function rootTask(
     state: string;
     parent_id: string | null;
   }[];
-  const root = tasks.find(task => task.parent_id === null);
-
-  if (root === undefined) throw new Error('the group has no root task');
+  const root = requirePresent(
+    tasks.find(task => task.parent_id === null),
+    'the group has no root task'
+  );
 
   return root;
 }
 
-export async function finishScriptedGroup(
-  ctx: Awaited<ReturnType<typeof boot>>,
+async function finishScriptedGroup(
+  ctx: HttpService,
   plannerToken: string,
   group: { id: string },
   task: { id: string },
@@ -291,7 +197,7 @@ export async function finishScriptedGroup(
     'in_review',
     'The pull request is ready.',
     inReview.version,
-    address
+    pullRequestEvidence
   );
 
   expect(ctx.simulated.calls().length).toBe(callsBefore);
@@ -305,7 +211,7 @@ export async function finishScriptedGroup(
     'approved',
     'The review approves the change.',
     approvedFrom.version,
-    address
+    pullRequestEvidence
   );
 
   const verifier = await startMember(ctx, reviewerToken, 'verifier', task.id, 'Check the branch.');
@@ -329,7 +235,7 @@ export async function finishScriptedGroup(
     'merging',
     'The check passed.',
     mergingFrom.version,
-    check
+    passingCheckEvidence
   );
 
   const doneFrom = await taskOf(ctx, reviewerToken, task.id);
@@ -341,12 +247,12 @@ export async function finishScriptedGroup(
     'done',
     'The pull request merged.',
     doneFrom.version,
-    address
+    pullRequestEvidence
   );
 
   const rootAfter = await rootTask(ctx, plannerToken);
-  const members = await json(ctx.server, 'GET', '/v1/sessions', undefined, {
-    authorization: `Bearer ${plannerToken}`,
+  const members = await sendJson(ctx.server, 'GET', '/v1/sessions', undefined, {
+    ...bearer(plannerToken),
   });
   const roles = ((members.body.sessions as { role: string }[]) ?? []).map(session => session.role);
 
@@ -355,29 +261,28 @@ export async function finishScriptedGroup(
     ['challenger', 'implementer', 'planner', 'reviewer', 'verifier'].sort()
   );
   expect(group.id.startsWith('grp_')).toBe(true);
-
-  ctx.server.stop();
 }
 
-export async function resumeAndRecord(
-  ctx: Awaited<ReturnType<typeof boot>>,
+async function resumeAndRecord(
+  ctx: HttpService,
   token: string,
   task: { id: string; version: number }
 ): Promise<void> {
-  await json(
+  await sendJson(
     ctx.server,
     'POST',
     '/v1/session/resume',
     {},
-    { authorization: `Bearer ${token}`, 'idempotency-key': 'errors-resume' }
+    { ...bearer(token), 'idempotency-key': 'errors-resume' }
   );
 
   const implementer = await startMember(ctx, token, 'implementer', task.id, 'Write the change.');
-  const implementerToken = ctx.simulated.secretFor(implementer.id);
+  const implementerToken = requirePresent(
+    ctx.simulated.secretFor(implementer.id),
+    'the implementer token should be injected'
+  );
 
-  if (implementerToken === null) throw new Error('the implementer token should be injected');
-
-  const badTransition = await json(
+  const badTransition = await sendJson(
     ctx.server,
     'POST',
     `/v1/tasks/${task.id}/transitions`,
@@ -387,10 +292,10 @@ export async function resumeAndRecord(
       note: 'This skip is not in the table.',
       evidence: [],
     },
-    { authorization: `Bearer ${implementerToken}`, 'idempotency-key': 'bad-transition' }
+    { ...bearer(implementerToken), 'idempotency-key': 'bad-transition' }
   );
 
-  expect(badTransition.status).toBe(409);
+  expectStatus(badTransition, 409);
   expect(errorCode(badTransition.body)).toBe('invalid_transition');
 
   const current = await taskOf(ctx, implementerToken, task.id);
@@ -398,7 +303,7 @@ export async function resumeAndRecord(
   await move(ctx, implementerToken, task.id, 'implementing', 'Work has started.', current.version);
 
   const reviewing = await taskOf(ctx, implementerToken, task.id);
-  const missingEvidence = await json(
+  const missingEvidence = await sendJson(
     ctx.server,
     'POST',
     `/v1/tasks/${task.id}/transitions`,
@@ -408,13 +313,13 @@ export async function resumeAndRecord(
       note: 'The pull request exists.',
       evidence: [],
     },
-    { authorization: `Bearer ${implementerToken}`, 'idempotency-key': 'missing-evidence' }
+    { ...bearer(implementerToken), 'idempotency-key': 'missing-evidence' }
   );
 
-  expect(missingEvidence.status).toBe(422);
+  expectStatus(missingEvidence, 422);
   expect(errorCode(missingEvidence.body)).toBe('evidence_required');
 
-  const stale = await json(
+  const stale = await sendJson(
     ctx.server,
     'POST',
     `/v1/tasks/${task.id}/transitions`,
@@ -422,17 +327,17 @@ export async function resumeAndRecord(
       to: 'in_review',
       expected_version: task.version,
       note: 'This version is old.',
-      evidence: address,
+      evidence: pullRequestEvidence,
     },
-    { authorization: `Bearer ${implementerToken}`, 'idempotency-key': 'stale-version' }
+    { ...bearer(implementerToken), 'idempotency-key': 'stale-version' }
   );
 
-  expect(stale.status).toBe(409);
+  expectStatus(stale, 409);
   expect(errorCode(stale.body)).toBe('conflict');
 
   ctx.simulated.queueError('start', 'unavailable');
 
-  const pending = await json(
+  const pending = await sendJson(
     ctx.server,
     'POST',
     '/v1/sessions',
@@ -441,15 +346,15 @@ export async function resumeAndRecord(
       task_id: task.id,
       instructions: 'The platform does not answer.',
     },
-    { authorization: `Bearer ${implementerToken}`, 'idempotency-key': 'pending-start' }
+    { ...bearer(implementerToken), 'idempotency-key': 'pending-start' }
   );
 
-  expect(pending.status).toBe(202);
+  expectStatus(pending, 202);
   expect(errorCode(pending.body)).toBe('start_pending');
 }
 
-export async function showCapReached(
-  ctx: Awaited<ReturnType<typeof boot>>,
+async function showCapReached(
+  ctx: HttpService,
   token: string,
   created: { body: Record<string, unknown> }
 ): Promise<void> {
@@ -465,14 +370,14 @@ export async function showCapReached(
     (created.body.group as { id: string }).id,
   ]);
 
-  const other = await json(
+  const other = await sendJson(
     ctx.server,
     'POST',
     '/v1/tasks',
     { title: 'Another task', description: 'This task competes for the last place.' },
-    { authorization: `Bearer ${token}`, 'idempotency-key': 'other-task' }
+    { ...bearer(token), 'idempotency-key': 'other-task' }
   );
-  const capped = await json(
+  const capped = await sendJson(
     ctx.server,
     'POST',
     '/v1/sessions',
@@ -481,63 +386,42 @@ export async function showCapReached(
       task_id: (other.body.task as { id: string }).id,
       instructions: 'There is no place left.',
     },
-    { authorization: `Bearer ${token}`, 'idempotency-key': 'capped' }
+    { ...bearer(token), 'idempotency-key': 'capped' }
   );
 
-  expect(capped.status).toBe(409);
+  expectStatus(capped, 409);
   expect(errorCode(capped.body)).toBe('cap_reached');
-
-  ctx.server.stop();
 }
 
 test('a member can read the task history', async () => {
-  const ctx = await boot({ secretInjection: false });
+  const ctx = await bootHttpService({ secretInjection: false });
   const key = await creatorKey(ctx);
-  const created = await json(
-    ctx.server,
-    'POST',
-    '/v1/groups',
-    {
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work and start the team.',
-      verification_mode: 'before_merge',
-    },
-    { authorization: `Bearer ${key}`, 'idempotency-key': 'history-group' }
-  );
+  const created = await createCheckoutGroup(ctx.server, key, 'history-group', {
+    instructions: 'Plan the work and start the team.',
+    verification_mode: 'before_merge',
+  });
   const root = created.body.root as { id: string };
   const planner = created.body.session as { id: string };
   const token = await enrollFromPrompt(ctx, planner.id);
-  const history = await json(ctx.server, 'GET', `/v1/tasks/${root.id}/events`, undefined, {
-    authorization: `Bearer ${token}`,
+  const history = await sendJson(ctx.server, 'GET', `/v1/tasks/${root.id}/events`, undefined, {
+    ...bearer(token),
   });
   const events = history.body.events as { task_id?: string; kind?: string }[];
 
-  expect(created.status).toBe(201);
-  expect(history.status).toBe(200);
+  expectStatus(created, 201);
+  expectStatus(history, 200);
   expect(events.some(event => event.task_id === root.id && event.kind === 'created')).toBe(true);
-  ctx.server.stop();
 });
 
 test('a scripted group reaches done through HTTP without a platform call on transition', async () => {
-  const ctx = await boot({ secretInjection: false });
+  const ctx = await bootHttpService({ secretInjection: false });
   const key = await creatorKey(ctx);
-  const created = await json(
-    ctx.server,
-    'POST',
-    '/v1/groups',
-    {
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work and start the team.',
-      verification_mode: 'before_merge',
-    },
-    { authorization: `Bearer ${key}`, 'idempotency-key': 'group-1' }
-  );
+  const created = await createCheckoutGroup(ctx.server, key, 'group-1', {
+    instructions: 'Plan the work and start the team.',
+    verification_mode: 'before_merge',
+  });
 
-  expect(created.status).toBe(201);
+  expectStatus(created, 201);
 
   const group = created.body.group as { id: string };
   const rootCreated = created.body.root as { id: string };
@@ -546,7 +430,7 @@ test('a scripted group reaches done through HTTP without a platform call on tran
 
   await move(ctx, plannerToken, rootCreated.id, 'analyzing', 'The plan is underway.');
 
-  const child = await json(
+  const child = await sendJson(
     ctx.server,
     'POST',
     '/v1/tasks',
@@ -554,10 +438,10 @@ test('a scripted group reaches done through HTTP without a platform call on tran
       title: 'Hide the tax rules',
       description: 'Move tax calculation behind an interface.',
     },
-    { authorization: `Bearer ${plannerToken}`, 'idempotency-key': 'task-1' }
+    { ...bearer(plannerToken), 'idempotency-key': 'task-1' }
   );
 
-  expect(child.status).toBe(201);
+  expectStatus(child, 201);
 
   const task = child.body.task as { id: string; version: number };
   const challenger = await startMember(
@@ -569,8 +453,8 @@ test('a scripted group reaches done through HTTP without a platform call on tran
   );
   const challengerToken = await enrollFromPrompt(ctx, challenger.id);
 
-  await json(ctx.server, 'GET', '/v1/session', undefined, {
-    authorization: `Bearer ${challengerToken}`,
+  await sendJson(ctx.server, 'GET', '/v1/session', undefined, {
+    ...bearer(challengerToken),
   });
 
   await move(ctx, plannerToken, rootCreated.id, 'implementing', 'A child task exists.');
@@ -597,111 +481,92 @@ test('a scripted group reaches done through HTTP without a platform call on tran
   await finishScriptedGroup(ctx, plannerToken, group, task, implementerToken);
 });
 test('the session routes return the named error codes', async () => {
-  const ctx = await boot();
+  const ctx = await bootHttpService();
   const key = await creatorKey(ctx);
-  const created = await json(
-    ctx.server,
-    'POST',
-    '/v1/groups',
-    {
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work.',
-    },
-    { authorization: `Bearer ${key}`, 'idempotency-key': 'errors-group' }
-  );
+  const created = await createCheckoutGroup(ctx.server, key, 'errors-group');
   const root = created.body.root as { id: string; version: number };
   const planner = created.body.session as { id: string };
-  const token = ctx.simulated.secretFor(planner.id);
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
 
-  if (token === null) throw new Error('the planner token should be injected');
+  const missing = await sendJson(ctx.server, 'GET', '/v1/session');
 
-  const missing = await json(ctx.server, 'GET', '/v1/session');
-
-  expect(missing.status).toBe(401);
+  expectStatus(missing, 401);
   expect(errorCode(missing.body)).toBe('unauthenticated');
 
   await move(ctx, token, root.id, 'analyzing', 'The plan is underway.', root.version);
 
-  const child = await json(
+  const child = await sendJson(
     ctx.server,
     'POST',
     '/v1/tasks',
     { title: 'Hide the tax rules', description: 'Move tax calculation behind an interface.' },
-    { authorization: `Bearer ${token}`, 'idempotency-key': 'errors-task' }
+    { ...bearer(token), 'idempotency-key': 'errors-task' }
   );
   const task = child.body.task as { id: string; version: number };
   const challenger = await startMember(ctx, token, 'challenger', root.id, 'Read the plan.');
-  const challengerToken = ctx.simulated.secretFor(challenger.id);
+  const challengerToken = requirePresent(
+    ctx.simulated.secretFor(challenger.id),
+    'the challenger token should be injected'
+  );
 
-  if (challengerToken === null) throw new Error('the challenger token should be injected');
-
-  const denied = await json(
+  const denied = await sendJson(
     ctx.server,
     'POST',
     '/v1/sessions',
     { role: 'implementer', task_id: task.id, instructions: 'A challenger cannot start this.' },
-    { authorization: `Bearer ${challengerToken}`, 'idempotency-key': 'denied' }
+    { ...bearer(challengerToken), 'idempotency-key': 'denied' }
   );
 
-  expect(denied.status).toBe(403);
+  expectStatus(denied, 403);
   expect(errorCode(denied.body)).toBe('policy_denied');
 
-  await json(
+  await sendJson(
     ctx.server,
     'POST',
     '/v1/session/release',
     {},
-    { authorization: `Bearer ${token}`, 'idempotency-key': 'errors-release' }
+    { ...bearer(token), 'idempotency-key': 'errors-release' }
   );
 
-  const inactive = await json(
+  const inactive = await sendJson(
     ctx.server,
     'POST',
     '/v1/sessions',
     { role: 'implementer', task_id: task.id, instructions: 'A released planner cannot start.' },
-    { authorization: `Bearer ${token}`, 'idempotency-key': 'inactive' }
+    { ...bearer(token), 'idempotency-key': 'inactive' }
   );
 
-  expect(inactive.status).toBe(403);
+  expectStatus(inactive, 403);
   expect(errorCode(inactive.body)).toBe('session_not_active');
 
   await resumeAndRecord(ctx, token, task);
   await showCapReached(ctx, token, created);
 });
 test('creating a task again with the same key does not write a second task', async () => {
-  const ctx = await boot();
+  const ctx = await bootHttpService();
   const key = await creatorKey(ctx);
-  const created = await json(
-    ctx.server,
-    'POST',
-    '/v1/groups',
-    {
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work.',
-    },
-    { authorization: `Bearer ${key}`, 'idempotency-key': 'task-idem-group' }
-  );
+  const created = await createCheckoutGroup(ctx.server, key, 'task-idem-group');
   const planner = created.body.session as { id: string };
   const root = created.body.root as { id: string; version: number };
-  const token = ctx.simulated.secretFor(planner.id);
-
-  if (token === null) throw new Error('the planner token should be injected');
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
 
   await move(ctx, token, root.id, 'analyzing', 'The plan is underway.', root.version);
 
-  const headers = { authorization: `Bearer ${token}`, 'idempotency-key': 'same-task' };
+  const headers = { ...bearer(token), 'idempotency-key': 'same-task' };
   const body = {
     title: 'Hide the tax rules',
     description: 'Move tax calculation behind an interface.',
   };
-  const first = await json(ctx.server, 'POST', '/v1/tasks', body, headers);
-  const second = await json(ctx.server, 'POST', '/v1/tasks', body, headers);
-  const listed = await json(ctx.server, 'GET', '/v1/tasks', undefined, {
-    authorization: `Bearer ${token}`,
+  const first = await sendJson(ctx.server, 'POST', '/v1/tasks', body, headers);
+  const second = await sendJson(ctx.server, 'POST', '/v1/tasks', body, headers);
+  const listed = await sendJson(ctx.server, 'GET', '/v1/tasks', undefined, {
+    ...bearer(token),
   });
   const children = (listed.body.tasks as { parent_id: string | null }[]).filter(
     task => task.parent_id !== null
@@ -709,138 +574,102 @@ test('creating a task again with the same key does not write a second task', asy
 
   expect((first.body.task as { id: string }).id).toBe((second.body.task as { id: string }).id);
   expect(children).toHaveLength(1);
-
-  ctx.server.stop();
 });
 
 test('a retry of the end route finishes the platform stop', async () => {
-  const ctx = await boot();
+  const ctx = await bootHttpService();
   const key = await creatorKey(ctx);
-  const created = await json(
-    ctx.server,
-    'POST',
-    '/v1/groups',
-    {
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work.',
-    },
-    { authorization: `Bearer ${key}`, 'idempotency-key': 'end-retry-group' }
-  );
+  const created = await createCheckoutGroup(ctx.server, key, 'end-retry-group');
   const planner = created.body.session as { id: string };
-  const token = ctx.simulated.secretFor(planner.id);
-
-  if (token === null) throw new Error('the planner token should be injected');
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
 
   ctx.simulated.queueError('end', 'unavailable');
 
-  const first = await json(
+  const first = await sendJson(
     ctx.server,
     'POST',
     `/v1/sessions/${planner.id}/end`,
     { reason: 'Stop after the platform refuses once.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
 
-  expect(first.status).toBe(503);
+  expectStatus(first, 503);
 
-  const second = await json(
+  const second = await sendJson(
     ctx.server,
     'POST',
     `/v1/sessions/${planner.id}/end`,
     { reason: 'Stop after the platform refuses once.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
   const ended = second.body.session as { life?: string };
   const group = created.body.group as { id: string };
   const occupancy = await ctx.deps.store.occupancy(defaultWorkspaceId, requireGroupId(group.id));
 
-  expect(second.status).toBe(200);
+  expectStatus(second, 200);
   expect(ended.life).toBe('ended');
   expect(occupancy.live_sessions).toBe(0);
   expect(ctx.simulated.calls().filter(call => call === 'end')).toHaveLength(2);
-
-  ctx.server.stop();
 });
 
 test('a lost self-end can be confirmed without restoring access', async () => {
-  const ctx = await boot();
+  const ctx = await bootHttpService();
   const key = await creatorKey(ctx);
-  const created = await json(
-    ctx.server,
-    'POST',
-    '/v1/groups',
-    {
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work.',
-    },
-    { authorization: `Bearer ${key}`, 'idempotency-key': 'lost-end-group' }
-  );
+  const created = await createCheckoutGroup(ctx.server, key, 'lost-end-group');
   const planner = created.body.session as { id: string };
-  const token = ctx.simulated.secretFor(planner.id);
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
 
-  if (token === null) throw new Error('the planner token should be injected');
-
-  const first = await json(
+  const first = await sendJson(
     ctx.server,
     'POST',
     '/v1/session/end',
     { reason: 'The success response was lost.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
-  const again = await json(
+  const again = await sendJson(
     ctx.server,
     'POST',
     '/v1/session/end',
     { reason: 'The success response was lost.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
-  const tasks = await json(ctx.server, 'GET', '/v1/tasks', undefined, {
-    authorization: `Bearer ${token}`,
+  const tasks = await sendJson(ctx.server, 'GET', '/v1/tasks', undefined, {
+    ...bearer(token),
   });
 
-  expect(first.status).toBe(200);
+  expectStatus(first, 200);
   expect((first.body.session as { life?: string }).life).toBe('ended');
-  expect(again.status).toBe(200);
+  expectStatus(again, 200);
   expect((again.body.session as { life?: string }).life).toBe('ended');
-  expect(tasks.status).toBe(401);
+  expectStatus(tasks, 401);
   expect(errorCode(tasks.body)).toBe('unauthenticated');
-
-  ctx.server.stop();
 });
 
 test('an implementer receipt confirms an end on both routes', async () => {
-  const ctx = await boot();
+  const ctx = await bootHttpService();
   const key = await creatorKey(ctx);
-  const created = await json(
-    ctx.server,
-    'POST',
-    '/v1/groups',
-    {
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work.',
-    },
-    { authorization: `Bearer ${key}`, 'idempotency-key': 'receipt-group' }
-  );
+  const created = await createCheckoutGroup(ctx.server, key, 'receipt-group');
   const root = created.body.root as { id: string; version: number };
   const planner = created.body.session as { id: string };
-  const plannerToken = ctx.simulated.secretFor(planner.id);
-
-  if (plannerToken === null) throw new Error('the planner token should be injected');
+  const plannerToken = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
 
   await move(ctx, plannerToken, root.id, 'analyzing', 'The plan is underway.', root.version);
 
-  const child = await json(
+  const child = await sendJson(
     ctx.server,
     'POST',
     '/v1/tasks',
     { title: 'Hide the tax rules', description: 'Move tax calculation behind an interface.' },
-    { authorization: `Bearer ${plannerToken}`, 'idempotency-key': 'receipt-task' }
+    { ...bearer(plannerToken), 'idempotency-key': 'receipt-task' }
   );
   const task = child.body.task as { id: string };
   const analyzing = await taskOf(ctx, plannerToken, root.id);
@@ -848,285 +677,227 @@ test('an implementer receipt confirms an end on both routes', async () => {
   await move(ctx, plannerToken, root.id, 'implementing', 'A child task exists.', analyzing.version);
 
   const implementer = await startMember(ctx, plannerToken, 'implementer', task.id, 'Write it.');
-  const implementerToken = ctx.simulated.secretFor(implementer.id);
+  const implementerToken = requirePresent(
+    ctx.simulated.secretFor(implementer.id),
+    'the implementer token should be injected'
+  );
 
-  if (implementerToken === null) throw new Error('the implementer token should be injected');
-
-  const ended = await json(
+  const ended = await sendJson(
     ctx.server,
     'POST',
     `/v1/sessions/${implementer.id}/end`,
     { reason: 'The planner ended this session.' },
-    { authorization: `Bearer ${plannerToken}`, 'idempotency-key': 'planner-ends-implementer' }
+    { ...bearer(plannerToken), 'idempotency-key': 'planner-ends-implementer' }
   );
-  const self = await json(
+  const self = await sendJson(
     ctx.server,
     'POST',
     '/v1/session/end',
     { reason: 'The receipt confirms the saved end.' },
-    { authorization: `Bearer ${implementerToken}`, 'idempotency-key': 'receipt-self' }
+    { ...bearer(implementerToken), 'idempotency-key': 'receipt-self' }
   );
-  const member = await json(
+  const member = await sendJson(
     ctx.server,
     'POST',
     `/v1/sessions/${implementer.id}/end`,
     { reason: 'The receipt confirms the saved end.' },
-    { authorization: `Bearer ${implementerToken}`, 'idempotency-key': 'receipt-member' }
+    { ...bearer(implementerToken), 'idempotency-key': 'receipt-member' }
   );
-  const tasks = await json(ctx.server, 'GET', '/v1/tasks', undefined, {
-    authorization: `Bearer ${implementerToken}`,
+  const tasks = await sendJson(ctx.server, 'GET', '/v1/tasks', undefined, {
+    ...bearer(implementerToken),
   });
 
-  expect(ended.status).toBe(200);
-  expect(self.status).toBe(200);
+  expectStatus(ended, 200);
+  expectStatus(self, 200);
   expect((self.body.session as { life: string }).life).toBe('ended');
-  expect(member.status).toBe(200);
+  expectStatus(member, 200);
   expect((member.body.session as { life: string }).life).toBe('ended');
-  expect(tasks.status).toBe(401);
-  ctx.server.stop();
+  expectStatus(tasks, 401);
 });
 
 test('a self-end retry finishes a pending usage read', async () => {
-  const ctx = await boot();
+  const ctx = await bootHttpService();
   const key = await creatorKey(ctx);
-  const created = await json(
-    ctx.server,
-    'POST',
-    '/v1/groups',
-    {
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work.',
-    },
-    { authorization: `Bearer ${key}`, 'idempotency-key': 'pending-usage-self' }
-  );
+  const created = await createCheckoutGroup(ctx.server, key, 'pending-usage-self');
   const planner = created.body.session as { id: string };
   const group = created.body.group as { id: string };
-  const token = ctx.simulated.secretFor(planner.id);
-
-  if (token === null) throw new Error('the planner token should be injected');
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
 
   ctx.simulated.controls.setReportedUsage(4);
   ctx.simulated.queueError('readUsage', 'unavailable');
 
-  const first = await json(
+  const first = await sendJson(
     ctx.server,
     'POST',
     '/v1/session/end',
     { reason: 'The usage read failed.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
   const pending = await ctx.deps.store.session(defaultWorkspaceId, requireSessionId(planner.id));
-  const again = await json(
+  const again = await sendJson(
     ctx.server,
     'POST',
     '/v1/session/end',
     { reason: 'Read the usage that was missed.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
-  const tasks = await json(ctx.server, 'GET', '/v1/tasks', undefined, {
-    authorization: `Bearer ${token}`,
+  const tasks = await sendJson(ctx.server, 'GET', '/v1/tasks', undefined, {
+    ...bearer(token),
   });
   const stored = await ctx.deps.store.group(defaultWorkspaceId, requireGroupId(group.id));
 
-  expect(first.status).toBe(200);
+  expectStatus(first, 200);
   expect(pending?.life).toBe('ended');
   expect(pending?.final_usage_pending).toBe(true);
-  expect(again.status).toBe(200);
+  expectStatus(again, 200);
   expect((again.body.session as { final_usage_pending?: boolean }).final_usage_pending).toBe(false);
   expect(stored?.spend).toBe('4');
-  expect(tasks.status).toBe(401);
+  expectStatus(tasks, 401);
   expect(errorCode(tasks.body)).toBe('unauthenticated');
-
-  ctx.server.stop();
 });
 
 test('a member-end retry finishes a pending usage read', async () => {
-  const ctx = await boot();
+  const ctx = await bootHttpService();
   const key = await creatorKey(ctx);
-  const created = await json(
-    ctx.server,
-    'POST',
-    '/v1/groups',
-    {
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work.',
-    },
-    { authorization: `Bearer ${key}`, 'idempotency-key': 'pending-usage-member' }
-  );
+  const created = await createCheckoutGroup(ctx.server, key, 'pending-usage-member');
   const planner = created.body.session as { id: string };
   const group = created.body.group as { id: string };
-  const token = ctx.simulated.secretFor(planner.id);
-
-  if (token === null) throw new Error('the planner token should be injected');
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
 
   ctx.simulated.controls.setReportedUsage(4);
   ctx.simulated.queueError('readUsage', 'unavailable');
 
-  const first = await json(
+  const first = await sendJson(
     ctx.server,
     'POST',
     `/v1/sessions/${planner.id}/end`,
     { reason: 'The usage read failed.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
   const pending = await ctx.deps.store.session(defaultWorkspaceId, requireSessionId(planner.id));
-  const again = await json(
+  const again = await sendJson(
     ctx.server,
     'POST',
     `/v1/sessions/${planner.id}/end`,
     { reason: 'Read the usage that was missed.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
-  const tasks = await json(ctx.server, 'GET', '/v1/tasks', undefined, {
-    authorization: `Bearer ${token}`,
+  const tasks = await sendJson(ctx.server, 'GET', '/v1/tasks', undefined, {
+    ...bearer(token),
   });
   const stored = await ctx.deps.store.group(defaultWorkspaceId, requireGroupId(group.id));
 
-  expect(first.status).toBe(200);
+  expectStatus(first, 200);
   expect(pending?.life).toBe('ended');
   expect(pending?.final_usage_pending).toBe(true);
-  expect(again.status).toBe(200);
+  expectStatus(again, 200);
   expect((again.body.session as { final_usage_pending?: boolean }).final_usage_pending).toBe(false);
   expect(stored?.spend).toBe('4');
-  expect(tasks.status).toBe(401);
+  expectStatus(tasks, 401);
   expect(errorCode(tasks.body)).toBe('unauthenticated');
-
-  ctx.server.stop();
 });
 
 test('a self-end retry stops a platform session found after the row ended', async () => {
-  const ctx = await boot();
+  const ctx = await bootHttpService();
   const key = await creatorKey(ctx);
-  const created = await json(
-    ctx.server,
-    'POST',
-    '/v1/groups',
-    {
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work.',
-    },
-    { authorization: `Bearer ${key}`, 'idempotency-key': 'late-ref-self' }
-  );
+  const created = await createCheckoutGroup(ctx.server, key, 'late-ref-self');
   const planner = created.body.session as { id: string };
   const group = created.body.group as { id: string };
-  const token = ctx.simulated.secretFor(planner.id);
-
-  if (token === null) throw new Error('the planner token should be injected');
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
 
   await forgetPlatformReference(ctx, planner.id);
   ctx.simulated.controls.setReportedUsage(4);
 
-  const again = await json(
+  const again = await sendJson(
     ctx.server,
     'POST',
     '/v1/session/end',
     { reason: 'Stop the session the platform accepted later.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
-  const tasks = await json(ctx.server, 'GET', '/v1/tasks', undefined, {
-    authorization: `Bearer ${token}`,
+  const tasks = await sendJson(ctx.server, 'GET', '/v1/tasks', undefined, {
+    ...bearer(token),
   });
   const stored = await ctx.deps.store.group(defaultWorkspaceId, requireGroupId(group.id));
 
-  expect(again.status).toBe(200);
+  expectStatus(again, 200);
 
   const ref = requirePlatformRef(again.body.session);
 
   expect((again.body.session as { final_usage_pending?: boolean }).final_usage_pending).toBe(false);
   expect(stored?.spend).toBe('4');
   expect(await ctx.simulated.adapter.send(ctx.simulated.connection(), ref, 'ping')).toBe('gone');
-  expect(tasks.status).toBe(401);
+  expectStatus(tasks, 401);
   expect(errorCode(tasks.body)).toBe('unauthenticated');
-
-  ctx.server.stop();
 });
 
 test('a member-end retry stops a platform session found after the row ended', async () => {
-  const ctx = await boot();
+  const ctx = await bootHttpService();
   const key = await creatorKey(ctx);
-  const created = await json(
-    ctx.server,
-    'POST',
-    '/v1/groups',
-    {
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work.',
-    },
-    { authorization: `Bearer ${key}`, 'idempotency-key': 'late-ref-member' }
-  );
+  const created = await createCheckoutGroup(ctx.server, key, 'late-ref-member');
   const planner = created.body.session as { id: string };
   const group = created.body.group as { id: string };
-  const token = ctx.simulated.secretFor(planner.id);
-
-  if (token === null) throw new Error('the planner token should be injected');
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
 
   await forgetPlatformReference(ctx, planner.id);
   ctx.simulated.controls.setReportedUsage(4);
 
-  const again = await json(
+  const again = await sendJson(
     ctx.server,
     'POST',
     `/v1/sessions/${planner.id}/end`,
     { reason: 'Stop the session the platform accepted later.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
-  const tasks = await json(ctx.server, 'GET', '/v1/tasks', undefined, {
-    authorization: `Bearer ${token}`,
+  const tasks = await sendJson(ctx.server, 'GET', '/v1/tasks', undefined, {
+    ...bearer(token),
   });
   const stored = await ctx.deps.store.group(defaultWorkspaceId, requireGroupId(group.id));
 
-  expect(again.status).toBe(200);
+  expectStatus(again, 200);
 
   const ref = requirePlatformRef(again.body.session);
 
   expect((again.body.session as { final_usage_pending?: boolean }).final_usage_pending).toBe(false);
   expect(stored?.spend).toBe('4');
   expect(await ctx.simulated.adapter.send(ctx.simulated.connection(), ref, 'ping')).toBe('gone');
-  expect(tasks.status).toBe(401);
+  expectStatus(tasks, 401);
   expect(errorCode(tasks.body)).toBe('unauthenticated');
-
-  ctx.server.stop();
 });
 
 test('an ending member cannot write or start until the stop finishes', async () => {
-  const ctx = await boot();
+  const ctx = await bootHttpService();
   const key = await creatorKey(ctx);
-  const created = await json(
-    ctx.server,
-    'POST',
-    '/v1/groups',
-    {
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work.',
-    },
-    { authorization: `Bearer ${key}`, 'idempotency-key': 'ending-writes-group' }
-  );
+  const created = await createCheckoutGroup(ctx.server, key, 'ending-writes-group');
   const planner = created.body.session as { id: string };
   const root = created.body.root as { id: string; version: number };
-  const token = ctx.simulated.secretFor(planner.id);
-
-  if (token === null) throw new Error('the planner token should be injected');
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
 
   ctx.simulated.queueError('end', 'unavailable');
 
-  const stopped = await json(
+  const stopped = await sendJson(
     ctx.server,
     'POST',
     `/v1/sessions/${planner.id}/end`,
     { reason: 'Stop after the platform refuses once.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
-  const moved = await json(
+  const moved = await sendJson(
     ctx.server,
     'POST',
     `/v1/tasks/${root.id}/transitions`,
@@ -1136,9 +907,9 @@ test('an ending member cannot write or start until the stop finishes', async () 
       note: 'The plan is underway.',
       evidence: [],
     },
-    { authorization: `Bearer ${token}`, 'idempotency-key': 'ending-move' }
+    { ...bearer(token), 'idempotency-key': 'ending-move' }
   );
-  const started = await json(
+  const started = await sendJson(
     ctx.server,
     'POST',
     '/v1/sessions',
@@ -1147,14 +918,14 @@ test('an ending member cannot write or start until the stop finishes', async () 
       task_id: root.id,
       instructions: 'Read the plan.',
     },
-    { authorization: `Bearer ${token}`, 'idempotency-key': 'ending-start' }
+    { ...bearer(token), 'idempotency-key': 'ending-start' }
   );
-  const finished = await json(
+  const finished = await sendJson(
     ctx.server,
     'POST',
     `/v1/sessions/${planner.id}/end`,
     { reason: 'Stop after the platform refuses once.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
   const task = await ctx.deps.store.tasks(
     defaultWorkspaceId,
@@ -1166,64 +937,50 @@ test('an ending member cannot write or start until the stop finishes', async () 
     requireGroupId((created.body.group as { id: string }).id)
   );
 
-  expect(stopped.status).toBe(503);
-  expect(moved.status).toBe(403);
+  expectStatus(stopped, 503);
+  expectStatus(moved, 403);
   expect(errorCode(moved.body)).toBe('session_not_active');
-  expect(started.status).toBe(403);
+  expectStatus(started, 403);
   expect(errorCode(started.body)).toBe('session_not_active');
-  expect(finished.status).toBe(200);
+  expectStatus(finished, 200);
   expect((finished.body.session as { life?: string }).life).toBe('ended');
   expect(rootAfter?.state).toBe('planned');
   expect(sessions.map(session => session.role)).toEqual(['planner']);
-
-  ctx.server.stop();
 });
 test('a retry of self-end finishes the platform stop', async () => {
-  const ctx = await boot();
+  const ctx = await bootHttpService();
   const key = await creatorKey(ctx);
-  const created = await json(
-    ctx.server,
-    'POST',
-    '/v1/groups',
-    {
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work.',
-    },
-    { authorization: `Bearer ${key}`, 'idempotency-key': 'self-end-group' }
-  );
+  const created = await createCheckoutGroup(ctx.server, key, 'self-end-group');
   const planner = created.body.session as { id: string };
-  const token = ctx.simulated.secretFor(planner.id);
-
-  if (token === null) throw new Error('the planner token should be injected');
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
 
   ctx.simulated.queueError('end', 'unavailable');
 
-  const first = await json(
+  const first = await sendJson(
     ctx.server,
     'POST',
     '/v1/session/end',
     { reason: 'Stop after the platform refuses once.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
-  const second = await json(
+  const second = await sendJson(
     ctx.server,
     'POST',
     '/v1/session/end',
     { reason: 'Stop after the platform refuses once.' },
-    { authorization: `Bearer ${token}` }
+    bearer(token)
   );
   const groupId = requireGroupId((created.body.group as { id: string }).id);
   const occupancy = await ctx.deps.store.occupancy(defaultWorkspaceId, groupId);
 
-  expect(first.status).toBe(503);
-  expect(second.status).toBe(200);
+  expectStatus(first, 503);
+  expectStatus(second, 200);
   expect((second.body.session as { life?: string }).life).toBe('ended');
   expect(occupancy.live_sessions).toBe(0);
   expect(ctx.simulated.calls().filter(call => call === 'end')).toHaveLength(2);
-
-  ctx.server.stop();
 });
 
 function requirePlatformRef(session: unknown): string {
@@ -1240,10 +997,7 @@ function requirePlatformRef(session: unknown): string {
   return ref;
 }
 
-async function forgetPlatformReference(
-  ctx: Awaited<ReturnType<typeof boot>>,
-  sessionId: string
-): Promise<void> {
+async function forgetPlatformReference(ctx: HttpService, sessionId: string): Promise<void> {
   const id = requireSessionId(sessionId);
   const stored = await ctx.deps.store.session(defaultWorkspaceId, id);
 
