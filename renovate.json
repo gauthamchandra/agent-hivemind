@@ -1,0 +1,23 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices", "customManagers:biomeVersions", "schedule:weekly"],
+  "semanticCommits": "enabled",
+  "packageRules": [
+    {
+      "description": "Bun is pinned in .tool-versions, ci.yml (x3), .cursor/install.sh (with per-arch SHA-256), README and CONTRIBUTING. Renovate can only edit some of them, so a bump is done by hand.",
+      "matchDepNames": ["bun"],
+      "enabled": false
+    },
+    {
+      "description": "Biome and the biome.json $schema URL move together, and apart from other tooling so a new lint rule fails its own PR.",
+      "matchDepNames": ["@biomejs/biome"],
+      "groupName": "biome"
+    },
+    {
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "excludeDepNames": ["@biomejs/biome"],
+      "groupName": "dev tooling"
+    }
+  ]
+}
