@@ -48,3 +48,12 @@ patterns) at the same commit. Licensed Apache-2.0.
 - **Path:** `.agents/skills/receiving-code-review/`
 - **License:** MIT (Copyright (c) 2025 Jesse Vincent; see `.agents/skills/receiving-code-review/LICENSE`)
 - **Note:** Snapshots for harness-agnostic discovery under `.agents/skills/`.
+
+## Ponytail skill
+
+- **Source:** [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail)
+  at commit `96608e078b2d5ea607c5c3b8b5a54d1c1fba6846`
+- **Path:** `.agents/skills/ponytail/`
+- **License:** MIT (Copyright (c) 2026 DietrichGebert; see `.agents/skills/ponytail/LICENSE`)
+- **Note:** Snapshot of `skills/ponytail/` only, for harness-agnostic discovery under
+  `.agents/skills/`.
