@@ -16,8 +16,8 @@
     {
       "matchDepTypes": ["devDependencies"],
       "matchUpdateTypes": ["minor", "patch"],
-      "excludeDepNames": ["@biomejs/biome"],
-      "groupName": "dev tooling"
+      "groupName": "dev tooling",
+      "matchDepNames": ["!@biomejs/biome"]
     }
   ]
 }
