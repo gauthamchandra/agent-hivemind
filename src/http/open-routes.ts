@@ -4,6 +4,7 @@ import { openGroup } from '@/core/session-open.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import { requireSessionId } from '@/domain/ids.ts';
 import { sha256Hex } from '@/domain/secret.ts';
+import { ownerMessageRoute } from '@/http/message-routes.ts';
 import type { HttpOptions } from '@/http/respond.ts';
 import {
   bearer,
@@ -103,7 +104,8 @@ export async function openRoute(
       session: publicSession(created.session),
     });
   }
-  return null;
+
+  return ownerMessageRoute(options, request, path, body, raw);
 }
 
 function readOptionalExpiry(body: Record<string, unknown>): string | null {

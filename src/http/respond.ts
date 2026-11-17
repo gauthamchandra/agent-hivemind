@@ -212,6 +212,7 @@ export function statusFor(code: ErrorCode): number {
   if (code === 'start_pending') return 202;
   if (code === 'platform_unavailable' || code === 'platform_auth_failed') return 502;
   if (code === 'platform_rate_limited' || code === 'unavailable') return 503;
+  if (code === 'rate_limited') return 429;
   if (code === 'ambiguous_credentials') return 400;
 
   return 409;

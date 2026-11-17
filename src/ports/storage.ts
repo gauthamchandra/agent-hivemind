@@ -1,11 +1,21 @@
 import type {
   ConnectionId,
+  CopyId,
   GroupId,
+  MessageId,
   PersonId,
   SessionId,
   TaskId,
+  WaitId,
   WorkspaceId,
 } from '@/domain/ids.ts';
+import type {
+  ClaimedDelivery,
+  DroppedCopy,
+  MessageRecord,
+  OutboxCopy,
+  WaitRecord,
+} from '@/domain/message.ts';
 import type {
   ContextNote,
   Group,
@@ -130,6 +140,55 @@ export interface UnitOfWork {
     completed: boolean;
     at: string;
   }): Promise<void>;
+  insertMessage(message: MessageRecord): Promise<void>;
+  insertCopy(copy: OutboxCopy): Promise<void>;
+  nextCopySequence(recipientId: SessionId): Promise<number>;
+  countSenderMessages(senderId: string, since: string): Promise<number>;
+  oldestSenderMessage(senderId: string, since: string): Promise<string | null>;
+  countBroadcasts(senderId: string, since: string): Promise<number>;
+  oldestBroadcast(senderId: string, since: string): Promise<string | null>;
+  countOpenQuestions(senderId: string): Promise<number>;
+  findMessage(
+    workspaceId: WorkspaceId,
+    groupId: GroupId,
+    id: MessageId
+  ): Promise<MessageRecord | null>;
+  loadMessage(id: MessageId): Promise<MessageRecord | null>;
+  copiesOf(messageId: MessageId): Promise<OutboxCopy[]>;
+  waitsInGroup(workspaceId: WorkspaceId, groupId: GroupId): Promise<WaitRecord[]>;
+  insertWait(wait: WaitRecord): Promise<void>;
+  clearQuestionWaits(questionId: MessageId, answererId: SessionId, at: string): Promise<void>;
+  clearWait(waitId: WaitId, waiterId: SessionId, at: string): Promise<WaitRecord | null>;
+  clearSessionWaits(sessionId: SessionId, at: string): Promise<void>;
+  groupSessions(workspaceId: WorkspaceId, groupId: GroupId): Promise<SessionRecord[]>;
+  releaseExpiredClaims(now: string): Promise<void>;
+  lockGroupsWithOutbox(deadline: string): Promise<void>;
+  dropExpiredCopies(deadline: string): Promise<DroppedCopy[]>;
+  dropUnavailableCopies(sessionId?: SessionId): Promise<DroppedCopy[]>;
+  claimDelivery(workerId: string, now: string, until: string): Promise<ClaimedDelivery | null>;
+  takeMessageBudget(connectionId: string, windowStart: string, ceiling: number): Promise<boolean>;
+  pauseConnection(connectionId: string, until: string): Promise<void>;
+  settleCopy(input: {
+    id: CopyId;
+    generation: number;
+    state: OutboxCopy['state'];
+    attempts: number;
+    busyStreak: number;
+    nextAttemptAt: string;
+    reason: OutboxCopy['outcome_reason'];
+    deliveredAt: string | null;
+  }): Promise<boolean>;
+  inbox(
+    workspaceId: WorkspaceId,
+    groupId: GroupId,
+    sessionId: SessionId,
+    kind: string | null,
+    unanswered: boolean
+  ): Promise<MessageRecord[]>;
+  mailPage(
+    workspaceId: WorkspaceId,
+    groupId: GroupId
+  ): Promise<{ messages: MessageRecord[]; copies: OutboxCopy[]; removed: number }>;
 }
 
 export interface Store {

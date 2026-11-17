@@ -1,4 +1,5 @@
 import { appendEvent } from '@/core/append-event.ts';
+import { settleRecipientMail } from '@/core/delivery.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
 import { occupancyFor } from '@/core/session-caps.ts';
 import { readFinalUsage, reclaimCompensatedStart } from '@/core/session-compensate.ts';
@@ -155,6 +156,7 @@ async function finishEnd(
   }
 
   await tx.voidEnrollmentCodes(session.id, now);
+  await settleRecipientMail(deps, tx, session.id);
   await appendEvent(deps, tx, {
     workspace_id: session.workspace_id,
     task_id: session.task_id,

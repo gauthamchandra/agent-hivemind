@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { drainOutbox } from '@/core/delivery.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
 import { openInstallation } from '@/core/installation.ts';
 import { HivemindError } from '@/domain/errors.ts';
@@ -39,7 +40,7 @@ export async function startHivemind(options?: {
 
   const installation = await openInstallation(deps);
   const connectionId = await ensureConnection(deps);
-  const simulated = createSimulatedPlatform(connectionId);
+  const simulated = createSimulatedPlatform(connectionId, { recordSent: false });
   const platforms: Platforms = {
     require(id) {
       if (id !== connectionId) {
@@ -55,12 +56,28 @@ export async function startHivemind(options?: {
     connectionId,
     ...(options?.port === undefined ? {} : { port: options.port }),
   });
+  let draining = false;
+  let activeDrain: Promise<void> = Promise.resolve();
+  const timer = setInterval(() => {
+    if (draining) return;
+
+    draining = true;
+    activeDrain = drainOutbox(deps, platforms, { workerId: 'hivemind-svc' })
+      .catch(() => {
+        console.error('Delivery will retry on the next tick.');
+      })
+      .finally(() => {
+        draining = false;
+      });
+  }, 1000);
 
   return {
     url: server.url,
     port: server.port,
     bootstrapSecret: installation.bootstrapSecret,
     async stop() {
+      clearInterval(timer);
+      await activeDrain;
       server.stop();
       await database.close();
     },

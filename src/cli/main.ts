@@ -6,6 +6,7 @@ import {
   whoamiCommand,
 } from '@/cli/commands.ts';
 import { CliError, exitCode, type Io, parseArgs } from '@/cli/io.ts';
+import { messageCommand } from '@/cli/message-commands.ts';
 
 const instructions: Record<string, string> = {
   cap_reached: 'Do not retry. Tell the planner which cap was reached, or escalate.',
@@ -18,6 +19,8 @@ const instructions: Record<string, string> = {
   evidence_required: 'Add the evidence this transition asks for, then report it again.',
   conflict: 'Read the task again and report with the current version.',
   start_pending: 'The start is still pending. Read the session before you try again.',
+  rate_limited: 'Wait, then try again. Do not send the same message in a loop.',
+  recipient_not_available: 'That member cannot receive a message. Pick a live member.',
 };
 
 export async function runHivemind(io: Io): Promise<number> {
@@ -42,6 +45,10 @@ export async function runHivemind(io: Io): Promise<number> {
     const released = await releaseCommand(io, parsed);
 
     if (released !== null) return released;
+
+    const message = await messageCommand(io, parsed);
+
+    if (message !== null) return message;
   } catch (error) {
     if (error instanceof CliError) {
       io.stderr(error.code);
@@ -59,7 +66,9 @@ export async function runHivemind(io: Io): Promise<number> {
 
     return 11;
   }
-  io.stderr('Run hivemind enroll, whoami, task, member, release, or resume.');
+  io.stderr(
+    'Run hivemind enroll, whoami, task, member, release, resume, send, ask, answer, relay, or inbox.'
+  );
 
   return 12;
 }

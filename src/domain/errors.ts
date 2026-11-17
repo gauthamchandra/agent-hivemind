@@ -23,6 +23,8 @@ export const errorCodes = [
   'platform_auth_failed',
   'group_closed',
   'unavailable',
+  'recipient_not_available',
+  'rate_limited',
 ] as const;
 
 export type ErrorCode = (typeof errorCodes)[number];
