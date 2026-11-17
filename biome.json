@@ -85,6 +85,25 @@
   },
   "overrides": [
     {
+      "includes": ["src/**/*.ts", "!src/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveLinesPerFunction": {
+              "level": "error",
+              "options": { "maxLines": 100 }
+            }
+          },
+          "style": {
+            "noExcessiveLinesPerFile": {
+              "level": "error",
+              "options": { "maxLines": 300 }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": ["src/domain/**", "!src/domain/**/*.test.ts"],
       "linter": {
         "rules": {

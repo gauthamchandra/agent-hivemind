@@ -80,34 +80,7 @@ function specAllows(input: PolicyInput): boolean {
       return false;
     case 'start_member':
     case 'start_replacement':
-      if (released) return false;
-      if (role === 'planner' && targetRole === 'challenger' && taskKind === 'root') return true;
-      if (
-        role === 'planner' &&
-        targetRole === 'implementer' &&
-        taskKind === 'child' &&
-        (taskState === 'planned' || taskState === 'implementing') &&
-        rootOpen
-      ) {
-        return true;
-      }
-      if (
-        role === 'implementer' &&
-        targetRole === 'reviewer' &&
-        relation === 'own' &&
-        taskState === 'implementing'
-      ) {
-        return true;
-      }
-      if (
-        role === 'reviewer' &&
-        targetRole === 'verifier' &&
-        relation === 'own' &&
-        (taskState === 'in_review' || taskState === 'approved' || taskState === 'merging')
-      ) {
-        return true;
-      }
-      return false;
+      return memberMayStart(role, released, targetRole, taskKind, taskState, relation, rootOpen);
     case 'end_self':
       if (role === 'implementer' || role === 'reviewer') return isClosedState(taskState);
       return role === 'planner' || role === 'challenger' || role === 'verifier';
@@ -122,6 +95,46 @@ function specAllows(input: PolicyInput): boolean {
       return neverAction;
     }
   }
+}
+
+function memberMayStart(
+  role: SessionRole,
+  released: boolean,
+  targetRole: SessionRole,
+  taskKind: 'root' | 'child',
+  taskState: TaskState,
+  relation: 'own' | 'other',
+  rootOpen: boolean
+): boolean {
+  if (released) return false;
+  if (role === 'planner' && targetRole === 'challenger' && taskKind === 'root') return true;
+  if (
+    role === 'planner' &&
+    targetRole === 'implementer' &&
+    taskKind === 'child' &&
+    (taskState === 'planned' || taskState === 'implementing') &&
+    rootOpen
+  ) {
+    return true;
+  }
+  if (
+    role === 'implementer' &&
+    targetRole === 'reviewer' &&
+    relation === 'own' &&
+    taskState === 'implementing'
+  ) {
+    return true;
+  }
+  if (
+    role === 'reviewer' &&
+    targetRole === 'verifier' &&
+    relation === 'own' &&
+    (taskState === 'in_review' || taskState === 'approved' || taskState === 'merging')
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function inputOf(fields: {

@@ -202,6 +202,8 @@ Relative imports within a module are fine. Prefer `@/` when crossing package roo
 
 ## Guidelines
 
+- When a file starts doing every job in its area, split it on the boundaries it already has
+- Do not grow a function in application code past 100 lines, or a TypeScript file of application code past 300 lines. Tests are outside both caps
 - Sign off every commit under the human who requested the work (see Commit sign-off)
 - Prefer `bunx` over `npx`
 - When moving code, do not leave diff-narration comments

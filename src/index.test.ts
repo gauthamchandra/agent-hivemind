@@ -4,17 +4,26 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startHivemind } from './index.ts';
 
-test('hivemind-svc answers health checks and shows the bootstrap key once', async () => {
-  const started = await startHivemind({ port: 0, dataDir: null, responseKey: 'test-response-key' });
-  const health = await fetch(`${started.url}/healthz`);
-  const ready = await fetch(`${started.url}/readyz`);
+test(
+  'hivemind-svc answers health checks and shows the bootstrap key once',
+  async () => {
+    const started = await startHivemind({
+      port: 0,
+      dataDir: null,
+      responseKey: 'test-response-key',
+    });
+    const health = await fetch(`${started.url}/healthz`);
+    const ready = await fetch(`${started.url}/readyz`);
 
-  expect(health.status).toBe(200);
-  expect(ready.status).toBe(200);
-  expect(started.bootstrapSecret?.startsWith('opk_')).toBe(true);
+    expect(health.status).toBe(200);
+    expect(ready.status).toBe(200);
+    expect(started.bootstrapSecret?.startsWith('opk_')).toBe(true);
 
-  await started.stop();
-});
+    await started.stop();
+  },
+  // The first boot compiles PGlite. On CI that can take longer than Bun's 5 second default.
+  { timeout: 20_000 }
+);
 
 test('a restarted process keeps the connection that existing groups use', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'hivemind-'));

@@ -68,6 +68,18 @@ test('a start or send error that includes a marker fails the secrets case', asyn
   expect(secrets?.passed).toBe(false);
 });
 
+test('a simulated start address uses the sessions path', async () => {
+  const ids = createIds(manualClock(new Date('2026-11-16T00:00:00.000Z')), systemRandom);
+  const simulated = createSimulatedPlatform(ids.connection());
+  const started = await simulated.adapter.start(
+    simulated.connection(),
+    platformStart('ses_address')
+  );
+
+  expect(started.address).toContain('/sessions/');
+  expect(started.address).not.toContain('/world.sessions/');
+});
+
 test('an ended session reads as stopped', async () => {
   const ids = createIds(manualClock(new Date('2026-11-16T00:00:00.000Z')), systemRandom);
   const simulated = createSimulatedPlatform(ids.connection());
