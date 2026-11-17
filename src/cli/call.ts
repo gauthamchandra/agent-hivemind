@@ -1,8 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { CliError, errorCode, type Io, sentence } from '@/cli/io.ts';
+import { sha256Hex } from '@/domain/secret.ts';
 
 const waits = [1000, 2000, 4000, 8000, 16000];
 
@@ -85,13 +86,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function requestKey(method: string, path: string, body: unknown): string {
   const payload = body === undefined ? '' : JSON.stringify(body);
 
-  return createHash('sha256').update(`${method}\n${path}\n${payload}`).digest('hex');
+  return sha256Hex(`${method}\n${path}\n${payload}`);
+}
+
+export function hivemindHome(io: Io): string {
+  return io.env.HIVEMIND_HOME ?? join(homedir(), '.hivemind');
 }
 
 export async function token(io: Io): Promise<string> {
   if (io.env.HIVEMIND_TOKEN) return io.env.HIVEMIND_TOKEN;
 
-  const home = io.env.HIVEMIND_HOME ?? join(homedir(), '.hivemind');
+  const home = hivemindHome(io);
 
   try {
     return (await readFile(join(home, 'token'), 'utf8')).trim();

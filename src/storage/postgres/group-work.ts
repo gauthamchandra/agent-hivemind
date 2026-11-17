@@ -2,7 +2,7 @@ import type { UnitOfWork } from '@/ports/storage.ts';
 import { parseWorkspace } from '@/storage/postgres/parse-account.ts';
 import { groupParams, parseGroup } from '@/storage/postgres/parse-group.ts';
 import type { Sql } from '@/storage/postgres/store-query.ts';
-import { json, one, run } from '@/storage/postgres/store-query.ts';
+import { json, one, oneParsed, run } from '@/storage/postgres/store-query.ts';
 
 export function groupWork(
   sql: Sql
@@ -15,7 +15,7 @@ export function groupWork(
         [workspaceId, id]
       );
 
-      return row === null ? null : parseGroup(row);
+      return oneParsed(row, parseGroup);
     },
     async insertGroup(group) {
       await run(
@@ -65,7 +65,7 @@ export function groupWork(
     async lockWorkspace(id) {
       const row = await one(sql, 'SELECT * FROM workspaces WHERE id = $1 FOR UPDATE', [id]);
 
-      return row === null ? null : parseWorkspace(row);
+      return oneParsed(row, parseWorkspace);
     },
   };
 }

@@ -1,4 +1,5 @@
 import type { ServiceDeps } from '@/core/deps.ts';
+import { endOnPlatform, findOnPlatform } from '@/core/session-platform.ts';
 import {
   addDecimal,
   canonicalizeDecimal,
@@ -28,27 +29,7 @@ export async function reclaimCompensatedStart(
 
   if (session.platform_session_ref !== null) return session;
 
-  const group = await deps.store.group(session.workspace_id, session.group_id);
-
-  if (group === null) {
-    throw new HivemindError('not_found', 'No group with that identifier is in this workspace.');
-  }
-
-  const handle = platforms.require(group.connection_id);
-  let found: Awaited<ReturnType<typeof handle.adapter.findByKey>>;
-
-  try {
-    found = await handle.adapter.findByKey(handle.connection, session.id, session.created_at);
-  } catch (error) {
-    if (error instanceof PlatformError) {
-      throw new HivemindError(
-        'unavailable',
-        'The platform did not say whether the session exists.'
-      );
-    }
-
-    throw error;
-  }
+  const found = await findOnPlatform(deps, platforms, session);
 
   if (found.outcome === 'inconclusive') {
     throw new HivemindError('unavailable', 'The platform did not say whether the session exists.');
@@ -92,24 +73,7 @@ export async function stopCompensatedPlatform(
     return session;
   }
 
-  const group = await deps.store.group(session.workspace_id, session.group_id);
-
-  if (group === null) {
-    throw new HivemindError('not_found', 'No group with that identifier is in this workspace.');
-  }
-
-  const handle = platforms.require(group.connection_id);
-
-  try {
-    await handle.adapter.end(handle.connection, session.platform_session_ref);
-  } catch (error) {
-    if (error instanceof PlatformError) {
-      throw new HivemindError('unavailable', 'The platform did not stop the session.');
-    }
-
-    throw error;
-  }
-
+  await endOnPlatform(deps, platforms, session, session.platform_session_ref);
   await readFinalUsage(deps, platforms, session);
 
   return (await deps.store.session(session.workspace_id, session.id)) ?? session;

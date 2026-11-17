@@ -1,4 +1,5 @@
 import type { ServiceDeps } from '@/core/deps.ts';
+import { requireOperatorKey } from '@/core/installation.ts';
 import type { ErrorCode } from '@/domain/errors.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { ConnectionId, PersonId, WorkspaceId } from '@/domain/ids.ts';
@@ -6,8 +7,6 @@ import { requirePersonId, requireWorkspaceId } from '@/domain/ids.ts';
 import type { EvidenceEntry, SessionRecord, TaskState, VerificationMode } from '@/domain/model.ts';
 import { isTaskState, isVerificationMode } from '@/domain/model.ts';
 import type { PlatformErrorClass } from '@/domain/platform.ts';
-import { sha256Hex } from '@/domain/secret.ts';
-import { parseTime } from '@/domain/time.ts';
 import type { Platforms } from '@/ports/platform.ts';
 
 export const maxBody = 256 * 1024;
@@ -27,24 +26,7 @@ export type KeyCaller = {
 };
 
 export async function requireKey(options: HttpOptions, request: Request): Promise<KeyCaller> {
-  const secret = requireBearer(request);
-
-  if (!secret.startsWith('opk_')) {
-    throw new HivemindError('unauthenticated', 'The operator key is not valid.');
-  }
-
-  const record = await options.deps.store.transact(tx => tx.operatorKeyByHash(sha256Hex(secret)));
-  const now = options.deps.clock.now().getTime();
-
-  if (
-    record === null ||
-    record.revoked_at !== null ||
-    record.person_id === null ||
-    (record.expires_at !== null && now >= parseTime(record.expires_at).getTime()) ||
-    (record.role !== 'creator' && record.role !== 'administrator')
-  ) {
-    throw new HivemindError('unauthenticated', 'The operator key is not valid.');
-  }
+  const record = await requireOperatorKey(options.deps, requireBearer(request));
 
   return {
     kind: 'key',

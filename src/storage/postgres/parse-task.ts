@@ -5,7 +5,7 @@ import {
   requireWorkspaceId,
 } from '@/domain/ids.ts';
 import type { Task } from '@/domain/model.ts';
-import { isTaskState, isVerificationMode } from '@/domain/model.ts';
+import { isActorKind, isTaskState, isVerificationMode } from '@/domain/model.ts';
 import { readTime } from '@/domain/time.ts';
 import type { Row, Sql } from '@/storage/postgres/store-query.ts';
 import {
@@ -85,8 +85,7 @@ export function parseTask(row: Row): Task {
   const parent = readNullableString(row, 'parent_id');
 
   if (!isTaskState(state) || !isVerificationMode(mode)) throw unreadable();
-  if (createdBy !== 'session' && createdBy !== 'person' && createdBy !== 'service')
-    throw unreadable();
+  if (!isActorKind(createdBy)) throw unreadable();
 
   return {
     id: requireTaskId(readString(row, 'id')),

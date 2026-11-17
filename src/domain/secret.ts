@@ -4,19 +4,26 @@ export function sha256Hex(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+type SecretRandom = { bytes(length: number): Uint8Array };
+
+/** 32 random bytes with a prefix a secret scanner can recognize. */
+function markedSecret(prefix: 'opk' | 'ses' | 'enr', random: SecretRandom): string {
+  return `${prefix}_${Buffer.from(random.bytes(32)).toString('base64url')}`;
+}
+
 /** 32 random bytes, marked so a secret scanner can recognize an operator key. */
-export function operatorKeySecret(random: { bytes(length: number): Uint8Array }): string {
-  return `opk_${Buffer.from(random.bytes(32)).toString('base64url')}`;
+export function operatorKeySecret(random: SecretRandom): string {
+  return markedSecret('opk', random);
 }
 
 /** 32 random bytes, marked so a secret scanner can recognize a session token. */
-export function sessionTokenSecret(random: { bytes(length: number): Uint8Array }): string {
-  return `ses_${Buffer.from(random.bytes(32)).toString('base64url')}`;
+export function sessionTokenSecret(random: SecretRandom): string {
+  return markedSecret('ses', random);
 }
 
 /** 32 random bytes, marked so a secret scanner can recognize an enrollment code. */
-export function enrollmentCodeSecret(random: { bytes(length: number): Uint8Array }): string {
-  return `enr_${Buffer.from(random.bytes(32)).toString('base64url')}`;
+export function enrollmentCodeSecret(random: SecretRandom): string {
+  return markedSecret('enr', random);
 }
 
 const textEncoder = new TextEncoder();

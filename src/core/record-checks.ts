@@ -1,15 +1,13 @@
-import type { ServiceDeps } from '@/core/deps.ts';
 import { storedTask, storedTransition } from '@/core/stored-response.ts';
 import { HivemindError } from '@/domain/errors.ts';
-import type { GroupId, PersonId, TaskId, WorkspaceId } from '@/domain/ids.ts';
+import type { GroupId, PersonId, SessionId, TaskId, WorkspaceId } from '@/domain/ids.ts';
 import { requireGroupId, requireTaskId } from '@/domain/ids.ts';
-import type { EvidenceEntry, Group, Person, Task, TaskEvent, TaskState } from '@/domain/model.ts';
-import { formatTime } from '@/domain/time.ts';
+import type { ActorKind, Group, Person, SessionLife, SessionRecord, Task } from '@/domain/model.ts';
 import type { IdempotencyRecord, UnitOfWork } from '@/ports/storage.ts';
 
 export const serviceId = 'hivemind-svc';
 
-export type StoredActor = { kind: 'session' | 'person' | 'service'; id: string };
+export type StoredActor = { kind: ActorKind; id: string };
 
 export type IdempotencyInput = {
   key: string;
@@ -18,42 +16,6 @@ export type IdempotencyInput = {
   callerId: string;
   route: string;
 };
-
-export async function appendEvent(
-  deps: ServiceDeps,
-  tx: UnitOfWork,
-  draft: {
-    workspace_id: WorkspaceId;
-    task_id: TaskId;
-    group_id: GroupId;
-    kind: TaskEvent['kind'];
-    actor: StoredActor;
-    from_state: TaskState | null;
-    to_state: TaskState | null;
-    evidence: EvidenceEntry[];
-    note: string | null;
-    data: TaskEvent['data'];
-  }
-): Promise<void> {
-  const event: TaskEvent = {
-    id: deps.ids.event(),
-    workspace_id: draft.workspace_id,
-    task_id: draft.task_id,
-    group_id: draft.group_id,
-    sequence: await tx.nextSequence(draft.group_id),
-    kind: draft.kind,
-    actor_kind: draft.actor.kind,
-    actor_id: draft.actor.id,
-    from_state: draft.from_state,
-    to_state: draft.to_state,
-    evidence: draft.evidence,
-    note: draft.note,
-    data: draft.data,
-    at: formatTime(deps.clock.now()),
-  };
-
-  await tx.insertEvent(event);
-}
 
 export async function replayedGroup(
   tx: UnitOfWork,
@@ -125,7 +87,7 @@ export async function replayedTask(
   return task;
 }
 
-async function replayedRecord(
+export async function replayedRecord(
   tx: UnitOfWork,
   workspaceId: WorkspaceId,
   idempotency: IdempotencyInput | undefined
@@ -222,6 +184,61 @@ export async function requireRoot(
   }
 
   return locked;
+}
+
+const actingLives = ['ended', 'start_failed'] as const;
+
+export function refuseInactiveSession(
+  session: SessionRecord,
+  blocked: { lives: readonly SessionLife[]; message: string } = {
+    lives: actingLives,
+    message: 'The session cannot act from this life.',
+  }
+): void {
+  if (session.token_hash === null) {
+    throw new HivemindError('unauthenticated', 'The session token is not valid.');
+  }
+
+  if (blocked.lives.includes(session.life)) {
+    throw new HivemindError('session_not_active', blocked.message, { life: session.life });
+  }
+
+  if (session.end_requested_at !== null) {
+    throw new HivemindError(
+      'session_not_active',
+      'The session is ending and cannot start new work.',
+      { life: session.life }
+    );
+  }
+}
+
+/** Lock the caller. A missing row is not a credential. */
+export async function lockedCaller(
+  tx: UnitOfWork,
+  workspaceId: WorkspaceId,
+  sessionId: SessionId
+): Promise<SessionRecord | null> {
+  const session = await tx.lockSession(workspaceId, sessionId);
+
+  if (session === null) return null;
+
+  refuseInactiveSession(session);
+
+  return session;
+}
+
+export async function requireLiveCaller(
+  tx: UnitOfWork,
+  workspaceId: WorkspaceId,
+  sessionId: SessionId
+): Promise<SessionRecord> {
+  const session = await lockedCaller(tx, workspaceId, sessionId);
+
+  if (session === null) {
+    throw new HivemindError('unauthenticated', 'The session token is not valid.');
+  }
+
+  return session;
 }
 
 export async function requireActivePerson(

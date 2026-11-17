@@ -1,14 +1,20 @@
+import { appendEvent } from '@/core/append-event.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
-import { appendEvent, requireTitle } from '@/core/record-checks.ts';
-import { requireLiveCaller, requireText, rootTask } from '@/core/session-rows.ts';
-import { storedTask } from '@/core/stored-response.ts';
+import {
+  type IdempotencyInput,
+  rememberIdempotency,
+  replayedTask,
+  requireBoundedText,
+  requireLiveCaller,
+  requireRoot,
+  requireTitle,
+} from '@/core/record-checks.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { SessionId, TaskId, WorkspaceId } from '@/domain/ids.ts';
-import { requireTaskId } from '@/domain/ids.ts';
 import type { EvidenceEntry, SessionRecord, Task } from '@/domain/model.ts';
 import { isClosedState } from '@/domain/model.ts';
 import { formatTime } from '@/domain/time.ts';
-import { evaluatePolicy } from '@/policy/policy.ts';
+import { requireAllowed } from '@/policy/policy.ts';
 import type { UnitOfWork } from '@/ports/storage.ts';
 
 export async function noteActivity(
@@ -60,7 +66,7 @@ export async function editChildTask(
       throw new HivemindError('unauthenticated', 'The session token is not valid.');
     }
 
-    const root = await rootTask(tx, input.workspaceId, caller.group_id);
+    const root = await requireRoot(tx, input.workspaceId, caller.group_id);
     const task = await tx.lockTask(input.workspaceId, input.taskId);
 
     if (task === null) {
@@ -73,7 +79,7 @@ export async function editChildTask(
       throw new HivemindError('not_found', 'No task with that identifier is in this workspace.');
     }
 
-    const decision = evaluatePolicy({
+    requireAllowed({
       role: session.role,
       action: 'edit_child_task',
       released: session.life === 'released',
@@ -86,16 +92,9 @@ export async function editChildTask(
       targetTaskClosed: isClosedState(task.state),
     });
 
-    if (!decision.allowed) {
-      throw new HivemindError('policy_denied', decision.message, {
-        role: decision.role,
-        action: decision.action,
-      });
-    }
-
     if (input.title !== null) task.title = requireTitle(input.title);
     if (input.description !== null) {
-      task.description = requireText(input.description, 'description', 32 * 1024);
+      task.description = requireBoundedText(input.description, 'description', 32 * 1024);
     }
 
     await tx.updateTask(task);
@@ -113,68 +112,10 @@ export async function addTaskNote(
     taskId: TaskId;
     note: string;
     evidence: EvidenceEntry[];
-    idempotency?: {
-      key: string;
-      bodyHash: string;
-      callerKind: string;
-      callerId: string;
-      route: string;
-    };
+    idempotency?: IdempotencyInput;
   }
 ): Promise<Task> {
   return deps.store.transact(tx => writeTaskNote(deps, tx, input));
-}
-
-async function replayedNote(
-  tx: UnitOfWork,
-  input: Parameters<typeof addTaskNote>[1],
-  task: Task
-): Promise<Task | null> {
-  if (input.idempotency) {
-    const existing = await tx.findIdempotency(
-      input.workspaceId,
-      input.idempotency.callerKind,
-      input.idempotency.callerId,
-      input.idempotency.route,
-      input.idempotency.key
-    );
-
-    if (existing) {
-      if (existing.body_hash !== input.idempotency.bodyHash) {
-        throw new HivemindError(
-          'idempotency_conflict',
-          'That idempotency key was used with a different body.'
-        );
-      }
-
-      const noted = storedTask(existing.response);
-
-      if (noted) return noted;
-
-      if (existing.record_id === null || existing.record_id === task.id) {
-        if (existing.record_id === null) {
-          throw new HivemindError(
-            'request_in_progress',
-            'The first request with this key is not complete.'
-          );
-        }
-
-        return task;
-      }
-
-      const saved = await tx.lockTask(input.workspaceId, requireTaskId(existing.record_id));
-
-      if (saved === null) {
-        throw new HivemindError(
-          'request_in_progress',
-          'The first request with this key is not complete.'
-        );
-      }
-
-      return saved;
-    }
-  }
-  return null;
 }
 
 async function writeTaskNote(
@@ -194,14 +135,14 @@ async function writeTaskNote(
     throw new HivemindError('not_found', 'No group with that identifier is in this workspace.');
   }
 
-  const root = await rootTask(tx, input.workspaceId, group.id);
+  const root = await requireRoot(tx, input.workspaceId, group.id);
   const task = await tx.lockTask(input.workspaceId, input.taskId);
 
   if (task === null) {
     throw new HivemindError('not_found', 'No task with that identifier is in this workspace.');
   }
 
-  const replayed = await replayedNote(tx, input, task);
+  const replayed = await replayedTask(tx, input.workspaceId, input.idempotency);
 
   if (replayed) return replayed;
 
@@ -211,7 +152,7 @@ async function writeTaskNote(
     throw new HivemindError('not_found', 'No task with that identifier is in this workspace.');
   }
 
-  const decision = evaluatePolicy({
+  requireAllowed({
     role: session.role,
     action: 'add_note',
     released: session.life === 'released',
@@ -224,14 +165,7 @@ async function writeTaskNote(
     targetTaskClosed: isClosedState(task.state),
   });
 
-  if (!decision.allowed) {
-    throw new HivemindError('policy_denied', decision.message, {
-      role: decision.role,
-      action: decision.action,
-    });
-  }
-
-  const note = requireText(input.note, 'note', 4 * 1024);
+  const note = requireBoundedText(input.note, 'note', 4 * 1024);
 
   await appendEvent(deps, tx, {
     workspace_id: task.workspace_id,
@@ -250,17 +184,8 @@ async function writeTaskNote(
   await tx.touchReport(session.id, notedAt);
 
   if (input.idempotency) {
-    await tx.insertIdempotency({
-      workspaceId: input.workspaceId,
-      callerKind: input.idempotency.callerKind,
-      callerId: input.idempotency.callerId,
-      route: input.idempotency.route,
-      key: input.idempotency.key,
-      bodyHash: input.idempotency.bodyHash,
-      recordId: task.id,
-      completed: true,
-      response: { task },
-      at: notedAt,
+    await rememberIdempotency(tx, input.workspaceId, input.idempotency, task.id, notedAt, {
+      task,
     });
   }
 

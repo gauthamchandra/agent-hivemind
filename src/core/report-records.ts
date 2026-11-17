@@ -1,6 +1,10 @@
 import { applyReport, closeRootWhenChildrenDone } from '@/core/apply-report.ts';
 import type { ReportActor, ServiceDeps } from '@/core/deps.ts';
 import {
+  type IdempotencyInput,
+  lockedCaller,
+  rememberIdempotency,
+  replayedRecord,
   requireActivePerson,
   requireGroup,
   requireRoot,
@@ -10,7 +14,7 @@ import {
 } from '@/core/record-checks.ts';
 import { storedTransition } from '@/core/stored-response.ts';
 import { HivemindError } from '@/domain/errors.ts';
-import type { GroupId, SessionId, TaskId, WorkspaceId } from '@/domain/ids.ts';
+import type { GroupId, TaskId, WorkspaceId } from '@/domain/ids.ts';
 import type {
   EvidenceEntry,
   Group,
@@ -22,7 +26,7 @@ import type {
 import { isClosedState } from '@/domain/model.ts';
 import { formatTime } from '@/domain/time.ts';
 import type { TransitionActor } from '@/domain/transitions.ts';
-import { evaluatePolicy } from '@/policy/policy.ts';
+import { requireAllowed } from '@/policy/policy.ts';
 import type { UnitOfWork } from '@/ports/storage.ts';
 
 export async function reportTransition(
@@ -37,41 +41,16 @@ export async function reportTransition(
     note: string;
     evidence: EvidenceEntry[];
     nextVerificationMode: VerificationMode | null;
-    idempotency?: {
-      key: string;
-      bodyHash: string;
-      callerKind: string;
-      callerId: string;
-      route: string;
-    };
+    idempotency?: IdempotencyInput;
   }
 ): Promise<{ task: Task; group: Group }> {
   return deps.store.transact(async tx => {
     const group = await requireGroup(tx, input.workspaceId, input.groupId);
     const root = await requireRoot(tx, input.workspaceId, input.groupId);
     const task = await requireTask(tx, input.workspaceId, input.taskId, input.groupId);
-    const idempotency = input.idempotency;
+    const existing = await replayedRecord(tx, input.workspaceId, input.idempotency);
 
-    if (idempotency) {
-      const existing = await tx.findIdempotency(
-        input.workspaceId,
-        idempotency.callerKind,
-        idempotency.callerId,
-        idempotency.route,
-        idempotency.key
-      );
-
-      if (existing) {
-        if (existing.body_hash !== idempotency.bodyHash) {
-          throw new HivemindError(
-            'idempotency_conflict',
-            'That idempotency key was used with a different body.'
-          );
-        }
-
-        return storedTransition(existing.response) ?? { task, group };
-      }
-    }
+    if (existing) return storedTransition(existing.response) ?? { task, group };
 
     if (task.version !== input.expectedVersion) {
       throw new HivemindError('conflict', 'The task changed since it was read.', {
@@ -106,19 +85,15 @@ export async function reportTransition(
       await tx.touchReport(input.actor.sessionId, formatTime(deps.clock.now()));
     }
 
-    if (idempotency) {
-      await tx.insertIdempotency({
-        workspaceId: input.workspaceId,
-        callerKind: idempotency.callerKind,
-        callerId: idempotency.callerId,
-        route: idempotency.route,
-        key: idempotency.key,
-        bodyHash: idempotency.bodyHash,
-        recordId: result.task.id,
-        completed: true,
-        response: { task: result.task, group: result.group },
-        at: formatTime(deps.clock.now()),
-      });
+    if (input.idempotency) {
+      await rememberIdempotency(
+        tx,
+        input.workspaceId,
+        input.idempotency,
+        result.task.id,
+        formatTime(deps.clock.now()),
+        { task: result.task, group: result.group }
+      );
     }
 
     return result;
@@ -156,6 +131,10 @@ async function resolveActor(
     const session = await lockedCaller(tx, workspaceId, actor.sessionId);
 
     if (session === null) {
+      if (actor.role === undefined || actor.live === undefined) {
+        throw new HivemindError('unauthenticated', 'The session token is not valid.');
+      }
+
       return {
         transition: { kind: 'session', role: actor.role, live: actor.live },
         stored: { kind: 'session', id: actor.sessionId },
@@ -209,52 +188,12 @@ function requireReporterTask(
     targetStartedByCaller: false,
     targetTaskClosed: isClosedState(task.state),
   } as const;
-  const decision = evaluatePolicy({
+  requireAllowed({
     ...input,
     action: to === 'failed' ? 'fail_task' : 'report_transition',
   });
 
-  if (!decision.allowed) {
-    throw new HivemindError('policy_denied', decision.message, {
-      role: decision.role,
-      action: decision.action,
-    });
-  }
-
   if (nextVerificationMode === null || nextVerificationMode === task.verification_mode) return;
 
-  const mode = evaluatePolicy({ ...input, action: 'move_verification_mode' });
-
-  if (!mode.allowed) {
-    throw new HivemindError('policy_denied', mode.message, {
-      role: mode.role,
-      action: mode.action,
-    });
-  }
-}
-
-export async function lockedCaller(tx: UnitOfWork, workspaceId: WorkspaceId, sessionId: SessionId) {
-  const session = await tx.lockSession(workspaceId, sessionId);
-
-  if (session === null) return null;
-
-  if (session.token_hash === null) {
-    throw new HivemindError('unauthenticated', 'The session token is not valid.');
-  }
-
-  if (session.life === 'ended' || session.life === 'start_failed') {
-    throw new HivemindError('session_not_active', 'The session cannot act from this life.', {
-      life: session.life,
-    });
-  }
-
-  if (session.end_requested_at !== null) {
-    throw new HivemindError(
-      'session_not_active',
-      'The session is ending and cannot start new work.',
-      { life: session.life }
-    );
-  }
-
-  return session;
+  requireAllowed({ ...input, action: 'move_verification_mode' });
 }

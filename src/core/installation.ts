@@ -1,7 +1,7 @@
 import type { ServiceDeps } from '@/core/deps.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import { defaultWorkspaceId } from '@/domain/ids.ts';
-import type { OperatorKeyRecord, OperatorKeyRole, Person, Workspace } from '@/domain/model.ts';
+import type { OperatorKeyRecord, Person, Workspace } from '@/domain/model.ts';
 import { selfHostedLimits } from '@/domain/model.ts';
 import { operatorKeySecret, sha256Hex } from '@/domain/secret.ts';
 import { formatTime, parseTime } from '@/domain/time.ts';
@@ -84,7 +84,7 @@ export async function createFirstAdministrator(
 
 export async function createOperatorKey(
   deps: ServiceDeps,
-  input: { bootstrapSecret: string; name: string; role: OperatorKeyRole; expiresAt: string | null }
+  input: { bootstrapSecret: string; name: string; role: string; expiresAt: string | null }
 ): Promise<{ record: OperatorKeyRecord; secret: string }> {
   return deps.store.transact(async tx => {
     const bootstrap = await requireBootstrap(deps, tx, input.bootstrapSecret);
@@ -166,6 +166,32 @@ async function ensureWorkspace(deps: ServiceDeps, tx: UnitOfWork): Promise<Works
   }
 
   return existing;
+}
+
+/** An operator key that can open a group: not revoked, not expired, and bound to a person. */
+export async function requireOperatorKey(
+  deps: ServiceDeps,
+  secret: string
+): Promise<OperatorKeyRecord & { person_id: string }> {
+  if (!secret.startsWith('opk_')) {
+    throw new HivemindError('unauthenticated', 'The operator key is not valid.');
+  }
+
+  const record = await deps.store.transact(tx => tx.operatorKeyByHash(sha256Hex(secret)));
+  const now = deps.clock.now().getTime();
+  const personId = record?.person_id ?? null;
+
+  if (
+    record === null ||
+    personId === null ||
+    record.revoked_at !== null ||
+    (record.expires_at !== null && now >= parseTime(record.expires_at).getTime()) ||
+    (record.role !== 'creator' && record.role !== 'administrator')
+  ) {
+    throw new HivemindError('unauthenticated', 'The operator key is not valid.');
+  }
+
+  return { ...record, person_id: personId };
 }
 
 async function requireBootstrap(

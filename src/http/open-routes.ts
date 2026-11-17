@@ -65,16 +65,10 @@ export async function openRoute(
 
   if (request.method === 'POST' && path === '/v1/bootstrap/keys') {
     const secret = requireBearer(request);
-    const role = readString(body, 'role');
-
-    if (role !== 'reader' && role !== 'creator' && role !== 'administrator') {
-      throw new HivemindError('validation_failed', 'The key role is not valid.', { field: 'role' });
-    }
-
     const created = await createOperatorKey(deps, {
       bootstrapSecret: secret,
       name: readString(body, 'name'),
-      role,
+      role: readString(body, 'role'),
       expiresAt: readOptionalExpiry(body),
     });
 

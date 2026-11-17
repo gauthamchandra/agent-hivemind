@@ -1,13 +1,16 @@
 import type { ServiceDeps } from '@/core/deps.ts';
-import { lockOwned, occupancyFor, reach } from '@/core/session-rows.ts';
+import { rememberIdempotency, replayedRecord } from '@/core/record-checks.ts';
+import { occupancyFor, reach } from '@/core/session-caps.ts';
+import { refuseLiveCaps } from '@/core/session-gate.ts';
+import { lockOwned } from '@/core/session-lock.ts';
 import { storedSession } from '@/core/stored-response.ts';
 import { compareDecimal } from '@/domain/decimal.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { SessionId, WorkspaceId } from '@/domain/ids.ts';
-import type { Group, SessionRecord, SessionRole } from '@/domain/model.ts';
+import type { SessionRecord } from '@/domain/model.ts';
 import { isClosedState } from '@/domain/model.ts';
 import { formatTime } from '@/domain/time.ts';
-import type { Occupancy, UnitOfWork } from '@/ports/storage.ts';
+import type { UnitOfWork } from '@/ports/storage.ts';
 
 export async function releaseSession(
   deps: ServiceDeps,
@@ -101,7 +104,11 @@ export async function resumeSession(
       throw new HivemindError('conflict', 'The task is closed.');
     }
 
-    refuseResumeCaps(
+    if (compareDecimal(group.spend, group.budget) >= 0) {
+      reach('budget', group.budget, group.spend);
+    }
+
+    refuseLiveCaps(
       group,
       workspace.limits.live_sessions,
       occupancy,
@@ -126,24 +133,21 @@ async function replayedLife(
   route: string,
   idempotency: { key: string; bodyHash: string } | undefined
 ): Promise<SessionRecord | null> {
-  if (idempotency === undefined) return null;
-
-  const existing = await tx.findIdempotency(
+  const existing = await replayedRecord(
+    tx,
     session.workspace_id,
-    'session',
-    session.id,
-    route,
-    idempotency.key
+    idempotency === undefined
+      ? undefined
+      : {
+          key: idempotency.key,
+          bodyHash: idempotency.bodyHash,
+          callerKind: 'session',
+          callerId: session.id,
+          route,
+        }
   );
 
   if (existing === null) return null;
-
-  if (existing.body_hash !== idempotency.bodyHash) {
-    throw new HivemindError(
-      'idempotency_conflict',
-      'That idempotency key was used with a different body.'
-    );
-  }
 
   return storedSession(existing.response) ?? session;
 }
@@ -157,46 +161,18 @@ async function rememberLife(
 ): Promise<void> {
   if (idempotency === undefined) return;
 
-  await tx.insertIdempotency({
-    workspaceId: session.workspace_id,
-    callerKind: 'session',
-    callerId: session.id,
-    route,
-    key: idempotency.key,
-    bodyHash: idempotency.bodyHash,
-    recordId: session.id,
-    completed: true,
-    response: { session: { ...session, token_hash: null } },
+  await rememberIdempotency(
+    tx,
+    session.workspace_id,
+    {
+      key: idempotency.key,
+      bodyHash: idempotency.bodyHash,
+      callerKind: 'session',
+      callerId: session.id,
+      route,
+    },
+    session.id,
     at,
-  });
-}
-
-function refuseResumeCaps(
-  group: Group,
-  workspaceLiveLimit: number,
-  occupancy: Occupancy,
-  role: SessionRole,
-  onTask: number
-): void {
-  if (compareDecimal(group.spend, group.budget) >= 0) reach('budget', group.budget, group.spend);
-  if (occupancy.live_sessions + 1 > group.caps.live_sessions) {
-    reach('live_sessions', group.caps.live_sessions, occupancy.live_sessions);
-  }
-
-  if (role === 'planner' || role === 'challenger' || role === 'implementer') {
-    const current =
-      occupancy[
-        role === 'planner' ? 'planner' : role === 'challenger' ? 'challenger' : 'implementer'
-      ];
-
-    if (current + 1 > group.caps.live_per_role[role]) {
-      reach('live_per_role', group.caps.live_per_role[role], current);
-    }
-  } else if (onTask + 1 > group.caps.live_per_task_role[role]) {
-    reach('live_per_task_role', group.caps.live_per_task_role[role], onTask);
-  }
-
-  if (occupancy.workspace_live_sessions + 1 > workspaceLiveLimit) {
-    reach('workspace_live_sessions', workspaceLiveLimit, occupancy.workspace_live_sessions);
-  }
+    { session: { ...session, token_hash: null } }
+  );
 }

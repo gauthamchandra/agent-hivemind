@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { call } from '@/cli/call.ts';
+import { call, hivemindHome } from '@/cli/call.ts';
 import { describe, flag, type Io, optional, type Parsed, print, readField } from '@/cli/io.ts';
 
 export async function enrollCommand(io: Io, parsed: Parsed): Promise<number | null> {
@@ -18,7 +17,7 @@ export async function enrollCommand(io: Io, parsed: Parsed): Promise<number | nu
       false
     );
     const token = readField(response, 'token');
-    const home = io.env.HIVEMIND_HOME ?? join(homedir(), '.hivemind');
+    const home = hivemindHome(io);
 
     const tokenPath = join(home, 'token');
     const staging = `${tokenPath}.${randomUUID()}.tmp`;

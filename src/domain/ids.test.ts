@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createIds } from '@/domain/ids.ts';
-import { manualClock } from '@/ports/clock.ts';
 import type { RandomSource } from '@/ports/random.ts';
+import { manualClock } from '@/testing/clock.ts';
 
 const fixedRandom: RandomSource = {
   bytes(length) {

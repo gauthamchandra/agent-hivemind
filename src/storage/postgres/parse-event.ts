@@ -1,6 +1,6 @@
 import { requireEventId, requireGroupId, requireTaskId, requireWorkspaceId } from '@/domain/ids.ts';
 import type { EvidenceEntry, TaskEvent } from '@/domain/model.ts';
-import { isTaskState } from '@/domain/model.ts';
+import { isActorKind, isTaskState } from '@/domain/model.ts';
 import { readTime } from '@/domain/time.ts';
 import type { Row, Sql } from '@/storage/postgres/store-query.ts';
 import {
@@ -47,8 +47,7 @@ export function parseEvent(row: Row): TaskEvent {
     throw unreadable();
   }
 
-  if (actorKind !== 'session' && actorKind !== 'person' && actorKind !== 'service')
-    throw unreadable();
+  if (!isActorKind(actorKind)) throw unreadable();
   if ((from !== null && !isTaskState(from)) || (to !== null && !isTaskState(to)))
     throw unreadable();
 

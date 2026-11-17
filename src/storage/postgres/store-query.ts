@@ -37,10 +37,14 @@ export async function many(sql: Sql, text: string, params: unknown[]): Promise<R
   return result.rows;
 }
 
-export async function readCount(sql: Sql, text: string): Promise<number> {
-  const row = await one(sql, text, []);
+export async function count(sql: Sql, text: string, params: unknown[] = []): Promise<number> {
+  const row = await one(sql, text, params);
 
   return readNumber(row ?? {}, 'count');
+}
+
+export function oneParsed<T>(row: Row | null, parse: (row: Row) => T): T | null {
+  return row === null ? null : parse(row);
 }
 
 export function readScalarRecord(value: unknown): Record<string, string | number | boolean | null> {

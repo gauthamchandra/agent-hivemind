@@ -2,20 +2,18 @@ import type { PGlite, Transaction } from '@electric-sql/pglite';
 import { requireConnectionId } from '@/domain/ids.ts';
 import type { Store, UnitOfWork } from '@/ports/storage.ts';
 import { accountWork } from '@/storage/postgres/account-work.ts';
-import { eventWork } from '@/storage/postgres/event-work.ts';
 import { groupWork } from '@/storage/postgres/group-work.ts';
 import { applyMigrations, executePglite } from '@/storage/postgres/migrate.ts';
 import { readEvents } from '@/storage/postgres/parse-event.ts';
 import { parseGroup } from '@/storage/postgres/parse-group.ts';
 import { readTasks } from '@/storage/postgres/parse-task.ts';
-import {
-  readOccupancy,
-  readSession,
-  readSessions,
-  sessionUnit,
-} from '@/storage/postgres/session-store.ts';
+import { codeWork } from '@/storage/postgres/session-codes.ts';
+import { counterWork } from '@/storage/postgres/session-counters.ts';
+import { readOccupancy, readSession, readSessions } from '@/storage/postgres/session-read.ts';
+import { rowWork } from '@/storage/postgres/session-row-work.ts';
 import {
   one,
+  oneParsed,
   readString,
   run,
   type Sql,
@@ -41,7 +39,7 @@ export function openSqlStore(db: SqlDatabase, migrate: () => Promise<void>): Sto
         groupId,
       ]);
 
-      return row === null ? null : parseGroup(row);
+      return oneParsed(row, parseGroup);
     },
 
     tasks(workspaceId, groupId) {
@@ -65,7 +63,7 @@ export function openSqlStore(db: SqlDatabase, migrate: () => Promise<void>): Sto
     },
 
     spawnCount(groupId, since) {
-      return sessionUnit(root).spawnCount(groupId, since);
+      return counterWork(root).spawnCount(groupId, since);
     },
 
     async connection(workspaceId) {
@@ -114,10 +112,11 @@ function queries(db: PGlite | Transaction): Sql {
 
 function unitOfWork(sql: Sql): UnitOfWork {
   return {
-    ...sessionUnit(sql),
+    ...counterWork(sql),
+    ...rowWork(sql),
+    ...codeWork(sql),
     ...accountWork(sql),
     ...groupWork(sql),
     ...taskWork(sql),
-    ...eventWork(sql),
   };
 }

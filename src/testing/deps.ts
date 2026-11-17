@@ -1,9 +1,9 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { ServiceDeps } from '@/core/deps.ts';
 import { createIds } from '@/domain/ids.ts';
-import { type ManualClock, manualClock } from '@/ports/clock.ts';
 import { type RandomSource, systemRandom } from '@/ports/random.ts';
 import { openPgliteStore } from '@/storage/postgres/store.ts';
+import { type ManualClock, manualClock } from '@/testing/clock.ts';
 
 export const testStartTime = '2026-11-16T00:00:00.000Z';
 export const testResponseKey = 'test-response-key';

@@ -1,7 +1,7 @@
 import type { UnitOfWork } from '@/ports/storage.ts';
-import { count, readOccupancy } from '@/storage/postgres/session-read.ts';
+import { readOccupancy } from '@/storage/postgres/session-read.ts';
 import type { Sql } from '@/storage/postgres/store-query.ts';
-import { one, readNumber } from '@/storage/postgres/store-query.ts';
+import { count, one, readNumber } from '@/storage/postgres/store-query.ts';
 
 export function counterWork(
   sql: Sql

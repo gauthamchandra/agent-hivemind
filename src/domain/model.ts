@@ -39,6 +39,13 @@ export type VerificationMode = (typeof verificationModes)[number];
 export const operatorKeyRoles = ['reader', 'creator', 'administrator', 'bootstrap'] as const;
 export type OperatorKeyRole = (typeof operatorKeyRoles)[number];
 
+export const actorKinds = ['session', 'person', 'service'] as const;
+export type ActorKind = (typeof actorKinds)[number];
+
+export function isActorKind(value: string): value is ActorKind {
+  return actorKinds.some(kind => kind === value);
+}
+
 export const workspaceRoles = ['member', 'administrator'] as const;
 export type WorkspaceRole = (typeof workspaceRoles)[number];
 
@@ -193,7 +200,7 @@ export type Task = {
   depends_on: TaskId[];
   changeset_round: number;
   respawns_used: number;
-  created_by_kind: 'session' | 'person' | 'service';
+  created_by_kind: ActorKind;
   created_by_id: string;
   created_at: string;
   closed_at: string | null;
@@ -241,7 +248,7 @@ export type SessionRecord = {
   start_attempt_id: string;
   existence_evidence_at: string | null;
   end_requested_at: string | null;
-  end_actor_kind: 'session' | 'person' | 'service' | null;
+  end_actor_kind: ActorKind | null;
   end_actor_id: string | null;
   end_reason: string | null;
   end_operation_id: string | null;
@@ -269,7 +276,7 @@ export type TaskEvent = {
     | 'session_started'
     | 'session_start_failed'
     | 'session_ended';
-  actor_kind: 'session' | 'person' | 'service';
+  actor_kind: ActorKind;
   actor_id: string;
   from_state: TaskState | null;
   to_state: TaskState | null;

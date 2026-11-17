@@ -1,4 +1,5 @@
 import type { ServiceDeps } from '@/core/deps.ts';
+import { rememberIdempotency, replayedRecord } from '@/core/record-checks.ts';
 import { routeEnroll } from '@/core/session-types.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { SessionId } from '@/domain/ids.ts';
@@ -24,22 +25,15 @@ export async function enroll(
       throw new HivemindError('unauthenticated', 'The enrollment code is not valid.');
     }
 
-    const existing = await tx.findIdempotency(
-      located.workspace_id,
-      'session',
-      input.sessionId,
-      routeEnroll,
-      input.idempotencyKey
-    );
+    const existing = await replayedRecord(tx, located.workspace_id, {
+      callerKind: 'session',
+      callerId: input.sessionId,
+      route: routeEnroll,
+      key: input.idempotencyKey,
+      bodyHash: input.bodyHash,
+    });
 
     if (existing) {
-      if (existing.body_hash !== input.bodyHash) {
-        throw new HivemindError(
-          'idempotency_conflict',
-          'That idempotency key was used with a different body.'
-        );
-      }
-
       const token = await storedToken(deps.responseKey, existing.response);
 
       if (token === null) {
@@ -87,18 +81,20 @@ export async function enroll(
     record.used_at = now;
     await tx.saveEnrollmentCode(record);
     await tx.updateSession(locked);
-    await tx.insertIdempotency({
-      workspaceId: located.workspace_id,
-      callerKind: 'session',
-      callerId: input.sessionId,
-      route: routeEnroll,
-      key: input.idempotencyKey,
-      bodyHash: input.bodyHash,
-      recordId: locked.id,
-      response: { sealed: await sealText(deps.responseKey, token, deps.random) },
-      completed: true,
-      at: now,
-    });
+    await rememberIdempotency(
+      tx,
+      located.workspace_id,
+      {
+        callerKind: 'session',
+        callerId: input.sessionId,
+        route: routeEnroll,
+        key: input.idempotencyKey,
+        bodyHash: input.bodyHash,
+      },
+      locked.id,
+      now,
+      { sealed: await sealText(deps.responseKey, token, deps.random) }
+    );
 
     return { token, session: locked };
   });

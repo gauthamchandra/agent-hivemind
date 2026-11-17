@@ -2,9 +2,9 @@ import { expect, test } from 'bun:test';
 import { runAdapterConformance } from '@/conformance/suite.ts';
 import { createIds } from '@/domain/ids.ts';
 import { createSimulatedPlatform } from '@/platform/simulated/adapter.ts';
-import { manualClock } from '@/ports/clock.ts';
 import type { StartSessionInput } from '@/ports/platform.ts';
 import { systemRandom } from '@/ports/random.ts';
+import { manualClock } from '@/testing/clock.ts';
 
 test('the simulated adapter passes the eleven conformance cases', async () => {
   const ids = createIds(manualClock(new Date('2026-11-16T00:00:00.000Z')), systemRandom);

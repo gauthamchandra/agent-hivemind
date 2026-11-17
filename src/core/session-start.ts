@@ -1,9 +1,11 @@
+import { appendEvent } from '@/core/append-event.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
-import { appendEvent } from '@/core/record-checks.ts';
+import { occupancyFor } from '@/core/session-caps.ts';
 import { reclaimCompensatedStart, stopCompensatedPlatform } from '@/core/session-compensate.ts';
 import { finishPlatformEnd, settleEndedPlatform } from '@/core/session-end.ts';
+import { outcomeFrom, owesCleanup, storedOutcome } from '@/core/session-outcome.ts';
+import { findOnPlatform } from '@/core/session-platform.ts';
 import { reserveStart } from '@/core/session-reserve.ts';
-import { occupancyFor, outcomeFrom, owesCleanup, storedOutcome } from '@/core/session-rows.ts';
 import {
   enrollmentTtlMs,
   type StartInput,
@@ -142,22 +144,7 @@ export async function recoverStart(
     return current;
   }
 
-  const group = await deps.store.group(input.workspaceId, current.group_id);
-
-  if (group === null) {
-    throw new HivemindError('not_found', 'No group with that identifier is in this workspace.');
-  }
-
-  const handle = platforms.require(group.connection_id);
-  let found: Awaited<ReturnType<typeof handle.adapter.findByKey>>;
-
-  try {
-    found = await handle.adapter.findByKey(handle.connection, current.id, current.created_at);
-  } catch (error) {
-    if (error instanceof PlatformError) return current;
-
-    throw error;
-  }
+  const found = await findOnPlatform(deps, platforms, current);
 
   if (found.outcome === 'inconclusive') return current;
 

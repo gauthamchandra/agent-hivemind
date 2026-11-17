@@ -1,4 +1,5 @@
-import { reach, rootTask } from '@/core/session-rows.ts';
+import { refuseInactiveSession, replayedRecord, requireRoot } from '@/core/record-checks.ts';
+import { reach } from '@/core/session-caps.ts';
 import type { StartInput } from '@/core/session-types.ts';
 import { startRoute } from '@/core/session-types.ts';
 import { compareDecimal } from '@/domain/decimal.ts';
@@ -7,7 +8,7 @@ import type { SessionId, TaskId, WorkspaceId } from '@/domain/ids.ts';
 import { requireSessionId } from '@/domain/ids.ts';
 import type { Group, SessionRecord, SessionRole, Task, Workspace } from '@/domain/model.ts';
 import { isClosedState } from '@/domain/model.ts';
-import { evaluatePolicy } from '@/policy/policy.ts';
+import { requireAllowed } from '@/policy/policy.ts';
 import type { Occupancy, UnitOfWork } from '@/ports/storage.ts';
 
 export async function requireStarter(
@@ -48,25 +49,11 @@ export async function requireStarter(
     throw new HivemindError('not_found', 'No task with that identifier is in this workspace.');
   }
 
-  if (caller.life === 'released' || caller.life === 'ended' || caller.life === 'start_failed') {
-    throw new HivemindError(
-      'session_not_active',
-      'The session cannot start a member from this life.',
-      {
-        life: caller.life,
-      }
-    );
-  }
-
-  if (caller.end_requested_at !== null) {
-    throw new HivemindError(
-      'session_not_active',
-      'The session is ending and cannot start new work.',
-      { life: caller.life }
-    );
-  }
-
-  const decision = evaluatePolicy({
+  refuseInactiveSession(caller, {
+    lives: ['released', 'ended', 'start_failed'],
+    message: 'The session cannot start a member from this life.',
+  });
+  requireAllowed({
     role: caller.role,
     action: input.replacementOf === null ? 'start_member' : 'start_replacement',
     released: false,
@@ -78,13 +65,6 @@ export async function requireStarter(
     targetStartedByCaller: false,
     targetTaskClosed: isClosedState(task.state),
   });
-
-  if (!decision.allowed) {
-    throw new HivemindError('policy_denied', decision.message, {
-      role: decision.role,
-      action: decision.action,
-    });
-  }
 
   return { parentId: caller.id };
 }
@@ -137,6 +117,16 @@ export function refuseStartCaps(
     reach('respawns_per_task_role', group.caps.respawns_per_task_role, replacements);
   }
 
+  refuseLiveCaps(group, workspaceLiveLimit, occupancy, role, onTask);
+}
+
+export function refuseLiveCaps(
+  group: Group,
+  workspaceLiveLimit: number,
+  occupancy: Occupancy,
+  role: SessionRole,
+  onTask: number
+): void {
   if (occupancy.live_sessions + 1 > group.caps.live_sessions) {
     reach('live_sessions', group.caps.live_sessions, occupancy.live_sessions);
   }
@@ -170,22 +160,15 @@ export async function lockStart(
 > {
   const workspace = await tx.lockWorkspace(input.workspaceId);
   const group = await tx.lockGroup(input.workspaceId, input.groupId);
-  const existing = await tx.findIdempotency(
-    input.workspaceId,
-    caller.kind,
-    caller.id,
-    startRoute(input.replacementOf),
-    input.idempotencyKey
-  );
+  const existing = await replayedRecord(tx, input.workspaceId, {
+    callerKind: caller.kind,
+    callerId: caller.id,
+    route: startRoute(input.replacementOf),
+    key: input.idempotencyKey,
+    bodyHash: input.bodyHash,
+  });
 
   if (existing) {
-    if (existing.body_hash !== input.bodyHash) {
-      throw new HivemindError(
-        'idempotency_conflict',
-        'That idempotency key was used with a different body.'
-      );
-    }
-
     if (existing.record_id === null) {
       throw new HivemindError(
         'request_in_progress',
@@ -213,7 +196,7 @@ export async function lockStart(
     throw new HivemindError('group_closed', 'The group accepts no new work.');
   }
 
-  const root = await rootTask(tx, input.workspaceId, group.id);
+  const root = await requireRoot(tx, input.workspaceId, group.id);
   const task = await tx.lockTask(input.workspaceId, input.taskId);
 
   if (task === null || task.group_id !== group.id) {

@@ -1,7 +1,7 @@
 import type { UnitOfWork } from '@/ports/storage.ts';
 import { parseSession, sessionParams } from '@/storage/postgres/session-read.ts';
 import type { Sql } from '@/storage/postgres/store-query.ts';
-import { one } from '@/storage/postgres/store-query.ts';
+import { one, oneParsed } from '@/storage/postgres/store-query.ts';
 
 export function rowWork(
   sql: Sql
@@ -87,17 +87,17 @@ export function rowWork(
         [workspaceId, id]
       );
 
-      return row === null ? null : parseSession(row);
+      return oneParsed(row, parseSession);
     },
     async sessionById(id) {
       const row = await one(sql, 'SELECT * FROM sessions WHERE id = $1', [id]);
 
-      return row === null ? null : parseSession(row);
+      return oneParsed(row, parseSession);
     },
     async sessionByTokenHash(hash) {
       const row = await one(sql, 'SELECT * FROM sessions WHERE token_hash = $1', [hash]);
 
-      return row === null ? null : parseSession(row);
+      return oneParsed(row, parseSession);
     },
     async sessionByEndReceipt(hash) {
       const row = await one(
@@ -111,7 +111,7 @@ export function rowWork(
         [hash]
       );
 
-      return row === null ? null : parseSession(row);
+      return oneParsed(row, parseSession);
     },
     async touchReport(sessionId, at) {
       await sql.query('UPDATE sessions SET last_report_at = $2::timestamptz WHERE id = $1', [

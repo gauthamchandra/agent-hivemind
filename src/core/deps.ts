@@ -14,6 +14,6 @@ export type ServiceDeps = {
 };
 
 export type ReportActor =
-  | { kind: 'session'; role: SessionRole; sessionId: SessionId; live: boolean }
+  | { kind: 'session'; sessionId: SessionId; role?: SessionRole; live?: boolean }
   | { kind: 'person'; personId: PersonId }
   | { kind: 'service' };

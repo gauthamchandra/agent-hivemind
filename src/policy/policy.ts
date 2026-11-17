@@ -1,3 +1,4 @@
+import { HivemindError } from '@/domain/errors.ts';
 import type { SessionRole, TaskState } from '@/domain/model.ts';
 import { isClosedState, sessionRoles } from '@/domain/model.ts';
 
@@ -183,6 +184,17 @@ export function matchesPolicyRule(rule: PolicyRule, input: PolicyInput): boolean
   if (rule.rootOpen === true && isClosedState(input.rootState)) return false;
 
   return true;
+}
+
+export function requireAllowed(input: PolicyInput): void {
+  const decision = evaluatePolicy(input);
+
+  if (!decision.allowed) {
+    throw new HivemindError('policy_denied', decision.message, {
+      role: decision.role,
+      action: decision.action,
+    });
+  }
 }
 
 export function evaluatePolicy(input: PolicyInput): PolicyDecision {

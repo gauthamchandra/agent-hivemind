@@ -31,25 +31,10 @@ export async function taskCollection(
   }
 
   if (request.method === 'POST' && path === '/v1/tasks') {
-    if (active.role !== 'planner') {
-      throw new HivemindError(
-        'policy_denied',
-        `The ${active.role} role cannot create_child_task.`,
-        {
-          role: active.role,
-          action: 'create_child_task',
-        }
-      );
-    }
-
     const created = await createChildTask(deps, {
       workspaceId: active.workspace_id,
       groupId: active.group_id,
-      actor: {
-        role: 'planner',
-        sessionId: active.id,
-        live: active.life === 'live' || active.life === 'starting',
-      },
+      actor: { sessionId: active.id },
       title: readString(body, 'title'),
       description: readString(body, 'description'),
       verificationMode: readMode(body.verification_mode),
@@ -125,12 +110,7 @@ export async function taskEvents(
       groupId: active.group_id,
       taskId: requireTaskId(decodeURIComponent(transition[1])),
       expectedVersion: readNumber(body, 'expected_version'),
-      actor: {
-        kind: 'session',
-        role: active.role,
-        sessionId: active.id,
-        live: active.life !== 'released',
-      },
+      actor: { kind: 'session', sessionId: active.id },
       to: readState(body.to),
       note: readString(body, 'note'),
       evidence: readEvidence(body.evidence),

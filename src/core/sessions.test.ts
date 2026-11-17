@@ -116,7 +116,7 @@ async function childTask(
   const created = await createChildTask(deps, {
     workspaceId: defaultWorkspaceId,
     groupId,
-    actor: { role: 'planner', sessionId: plannerId, live: true },
+    actor: { sessionId: plannerId, live: true },
     title,
     description: 'A child task with enough description to be stored.',
     verificationMode: null,
@@ -1898,7 +1898,7 @@ test('a released planner cannot create a child from a stale live flag', async ()
     createChildTask(ctx.deps, {
       workspaceId: defaultWorkspaceId,
       groupId: ctx.opened.group.id,
-      actor: { role: 'planner', sessionId: ctx.planner.id, live: true },
+      actor: { sessionId: ctx.planner.id, live: true },
       title: 'After release',
       description: 'A child task with enough description to be stored.',
       verificationMode: null,
@@ -2071,7 +2071,7 @@ test('two creates with one key save one child', async () => {
   const input = {
     workspaceId: defaultWorkspaceId,
     groupId: ctx.opened.group.id,
-    actor: { role: 'planner' as const, sessionId: ctx.planner.id, live: true },
+    actor: { sessionId: ctx.planner.id, live: true },
     title: 'One child',
     description: 'A child task with enough description to be stored.',
     verificationMode: null,
@@ -2901,7 +2901,7 @@ test('a replay of a created task keeps the task that create applied', async () =
   const created = await createChildTask(ctx.deps, {
     workspaceId: defaultWorkspaceId,
     groupId: ctx.opened.group.id,
-    actor: { role: 'planner', sessionId: ctx.planner.id, live: true },
+    actor: { sessionId: ctx.planner.id, live: true },
     title: 'Keep this title',
     description: 'A child task with enough description to be stored.',
     verificationMode: null,
@@ -2924,7 +2924,7 @@ test('a replay of a created task keeps the task that create applied', async () =
   const replay = await createChildTask(ctx.deps, {
     workspaceId: defaultWorkspaceId,
     groupId: ctx.opened.group.id,
-    actor: { role: 'planner', sessionId: ctx.planner.id, live: true },
+    actor: { sessionId: ctx.planner.id, live: true },
     title: 'Keep this title',
     description: 'A child task with enough description to be stored.',
     verificationMode: null,
