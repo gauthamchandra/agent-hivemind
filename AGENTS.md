@@ -62,9 +62,12 @@ without waiting to be asked.
 
 ## agent-hivemind
 
-A Bun + TypeScript service. Product code lives under `src/`: the record of groups,
-tasks, and sessions, the HTTP service, and the `hivemind` client. How to run it is
-in [README.md](README.md).
+A Bun + TypeScript service that coordinates AI coding agents. Product code lives under
+`src/`: the record of groups, tasks, and sessions, the HTTP service, and the `hivemind`
+client. [README.md](README.md) says what it is for and how to run it. Read
+[docs/architecture.md](docs/architecture.md) before you move code between layers, and
+[docs/state-machines.md](docs/state-machines.md) before you change a transition, a policy
+rule, or a session's life.
 
 ## Commands
 
@@ -93,8 +96,14 @@ For non-trivial work, do not start implementation until the caller has seen a sh
 and answered any questions it raised. The plan should state what will change, what will
 not (known gaps and YAGNI cuts), which tests come first, and open design questions.
 
-Docs, CI, lint/format config, and other infrastructure can skip this gate. If the caller
-already answered the design questions, do not re-ask — proceed.
+A change that meets the ADR bar in [CONTRIBUTING.md](CONTRIBUTING.md#architecture-decisions)
+is non-trivial by definition. The plan names the ADR: one it will add, or an accepted one that
+already covers the change. Write a new ADR before the code that depends on it, in the same pull
+request.
+
+Docs, CI, lint/format config, and other infrastructure can skip this gate. An ADR is a doc, so
+writing one skips the gate. The change it records does not. If the caller already answered the
+design questions, do not re-ask — proceed.
 
 ## Migrations
 

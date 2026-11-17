@@ -1,0 +1,483 @@
+# Architecture
+
+This page explains how hivemind-svc is built: how the code is layered, where the rules live,
+how it keeps its counts honest when two requests race, and what happens when a platform call
+fails halfway. The reasoning behind the big choices is in the [decision records](adr/).
+
+The picture of the whole system, and the vocabulary (group, task, session, role), are in the
+[README](../README.md). Every state change is in [state-machines.md](state-machines.md).
+
+A group, from start to finish:
+
+1. A person opens a group over HTTP with an operator key. The service stores the group and its
+   root task, then starts a **planner** session on the platform.
+2. The planner reports `planned` to `analyzing`, creates child tasks, and starts one
+   **implementer** per task. Every call is the `hivemind` command with the planner's token.
+
+   **One implementer per task is a design decision, not a limit of the current build.** An
+   implementer that worked on more than one pull request at a time would thrash. Most coding
+   harnesses subscribe the agent to GitHub pull-request events, so any activity on a pull
+   request, from a bot or a person, interrupts the agent and forces it to switch to that pull
+   request. With enough activity across several pull requests, the agent's context fills and
+   the harness compacts it, and depending on the harness the agent then hallucinates. One task,
+   one implementer and one pull request keeps each agent on a single stream of events. See
+   [ADR 0002](adr/0002-one-implementer-per-task.md).
+
+3. While its task is `implementing`, an implementer starts a **reviewer**, then moves the task
+   to `in_review`. The reviewer signs off, starts a **verifier** if the task's verification
+   mode asks for one, and reports the merge.
+4. Spend is meant to be kept current while agents run: every five minutes the service reads each
+   running session's usage from the platform and adds the increase to the group's spend. A start
+   is then refused once a poll records that the budget has been reached, not only after a
+   session ends. A start can still be accepted between polls. Ending agents that are still
+   running is a later step. **This is not built.** Today the service reads usage only when a
+   session ends. See [Budget](#budget) and
+   [ADR 0005](adr/0005-spend-is-polled-while-sessions-run.md).
+5. When every child task is `done`, the service closes the root task, which closes the group.
+
+## Who starts whom, and who talks to whom
+
+Sessions have two relationships, and they are meant to have different shapes.
+
+| Relationship | Shape                                       | What it decides                                                          | State            |
+| ------------ | ------------------------------------------- | ------------------------------------------------------------------------ | ---------------- |
+| Starting     | A tree                                      | Who owns a task's moves, who may end whom, who may start a replacement.  | Built            |
+| Talking      | A mesh: any agent to any agent in the group | Who may ask for information, give advice, or help review a pull request. | Policy rows only |
+
+The main difference between this project and parent-and-child orchestration is the second row.
+In a tree, a message from one branch to another goes up to a common parent and back down. Here
+a session may address any other session in its group, or several, without going through the
+session that started it. The uses it is meant for are asking another agent for information,
+getting advice on what a term or design choice means in this codebase, and helping review
+another task's pull request. That help is advice, not approval.
+
+The tree stays because ownership needs it: a task has one implementer, one reviewer and one
+verifier at a time, and only they report its moves. A message is not a report. The policy table
+gives messages their own actions, and nothing in it lets a message move a task.
+
+The decision, with what it rules out and what is still open, is in
+[ADR 0004](adr/0004-peer-messaging-within-a-group.md). Today the policy table lets every role
+send to one member and read messages, and lets only the planner send to all.
+`hivemind member list` shows the sessions in the group. No route, command, delivery or storage
+for messages exists. See [Not built yet](#not-built-yet).
+
+### Approval stays outside the swarm
+
+A peer's review never counts as approval. The swarm is not the adjudicator of an organisation's
+approval process, and the service does not read, request or count pull-request approvals. The
+`approved` state (C4) says the task's own reviewer session signed off. It is a handoff, not a
+merge approval. The intended setup is many code-review bots plus an auto-approver that stamps
+low-risk pull requests and gates higher-risk ones for a person. See
+[ADR 0003](adr/0003-approval-stays-outside-the-swarm.md).
+
+## Layers
+
+Code is split into layers, and Biome fails the build when a layer imports one it must not.
+
+| Layer             | Responsibility                                                                         | May depend on                              |
+| ----------------- | -------------------------------------------------------------------------------------- | ------------------------------------------ |
+| domain            | Types, ids, errors, and the task transition tables with the function that applies them | Nothing else                               |
+| policy            | The permission table: which role may take which action, where                          | domain                                     |
+| ports             | The interfaces the services need: storage and the platform adapter                     | domain                                     |
+| core              | The services: open a group, report a transition, start, end, release, resume, enroll   | domain, policy, ports                      |
+| storage           | The Postgres store and its migrations                                                  | domain, ports                              |
+| platform adapters | One adapter per agent platform. Only a simulated one exists                            | domain, ports                              |
+| http              | Routes, credential checks, error mapping                                               | domain, ports, core                        |
+| cli               | The `hivemind` command                                                                 | Nothing in the service. It talks over HTTP |
+| conformance       | A suite that checks an adapter against the platform contract                           | domain, ports                              |
+
+```mermaid
+flowchart LR
+  startup["startup<br/>wires everything"]
+  http --> core
+  http --> ports
+  core --> policy
+  core --> ports
+  storage --> ports
+  platform --> ports
+  conformance --> ports
+  startup -.-> http
+  startup -.-> storage
+  startup -.-> platform
+```
+
+Every layer except `cli` may also depend on `domain`. Arrows to it are left out of the picture.
+
+Why it is cut this way:
+
+- **`domain` and `policy` are pure.** They take plain values and return a decision. Neither
+  touches a database, a clock, or the network, so their tests can enumerate every row: one test
+  per transition row, and one allow or deny for every role, action and task state.
+- **`core` cannot name a platform.** A lint rule rejects the names of platforms in `core`, the
+  simulated one included. The service learns what a platform can do from its declared
+  capabilities, never from its name.
+- **`core` cannot see SQL or HTTP.** It works through the storage interface, so the same
+  service code runs on any Postgres.
+- **`cli` cannot depend on the service.** Agents reach the service the way any other client
+  would.
+
+## Ports
+
+### Storage
+
+The storage port gives a service one transaction with typed reads and writes, including row
+locks. A service never commits. Everything a request changes lands in one transaction, or in a
+deliberate sequence of them (see [Surviving failure](#surviving-failure)).
+
+### Platform
+
+A **platform adapter** is the only code that talks to an agent platform. The platform is
+whatever hosts the agent sessions.
+
+| Operation              | What it does                                                                                               | Used by the service today |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------- |
+| start                  | Starts a session from a prompt, a title, settings, and an idempotency key.                                 | Yes                       |
+| find by key            | Answers "did a start with this key create a session?": found, absent, or inconclusive.                     | Yes, in recovery          |
+| end                    | Stops a session. Repeating it must be safe.                                                                | Yes                       |
+| read usage             | Returns the session's cumulative usage. It must never go down.                                             | Yes, after an end         |
+| probe                  | Lists the capabilities the connection has.                                                                 | No                        |
+| read status, read many | Read a session's neutral status: working, idle, waiting for a person, suspended, stopped, failed, unknown. | No                        |
+| send                   | Messages a running session. Results: accepted, busy, rate limited, gone.                                   | No                        |
+| suspend, describe      | Pause a session. Describe the adapter.                                                                     | No                        |
+
+Failures carry one of six classes: `auth`, `rate_limited`, `quota`, `invalid`, `not_found`,
+`unavailable`. A message never carries a credential, a prompt, or a message body. The first
+four classes are **refusals**: the platform said no, so the service gives the place back.
+`unavailable` means the service does not know what happened.
+
+Nine capabilities exist, and the service reads two. `usage_reading` is required to open a
+group, because a budget cannot work if usage cannot be read. `secret_injection` decides how a
+session gets its token (see [Authentication](#authentication)).
+
+A conformance suite of eleven cases checks an adapter against the contract: idempotent start,
+repeatable end, usage that never goes down, no secrets in errors, find by key, and others. It
+runs against controls that stand in for a recorded platform, so it never touches the network.
+Only the simulated adapter has been run through it.
+
+## Authentication
+
+There are three credentials.
+
+| Credential      | Looks like | Stored as                    | Used for                           |
+| --------------- | ---------- | ---------------------------- | ---------------------------------- |
+| Operator key    | `opk_…`    | SHA-256 hash, with a role    | Bootstrapping, and opening a group |
+| Session token   | `ses_…`    | SHA-256 hash on the session  | Everything an agent does           |
+| Enrollment code | `enr_…`    | SHA-256 hash, 15 minute life | Trading for a session token, once  |
+
+The first start on an empty database creates the default workspace and a **bootstrap key**,
+prints it once, and lets it live for 24 hours. The bootstrap key creates the first
+administrator, then operator keys with the role `reader`, `creator` or `administrator`. Only
+`creator` and `administrator` keys can open a group. A `reader` key can do nothing today.
+
+**How a session gets its token.** The prompt never carries a token. What happens next depends
+on the platform's `secret_injection` capability:
+
+- With it, the service mints the token when it reserves the session and hands it to the
+  platform as a secret named `HIVEMIND_TOKEN`. The agent's first authenticated call counts as
+  enrollment.
+- Without it, the prompt carries an enrollment code and the agent runs `hivemind enroll`. The
+  code is good for 15 minutes and is voided after five wrong attempts. Enrolling returns the
+  token once. A repeat of the same request returns the same token only while
+  `HIVEMIND_RESPONSE_KEY` is unchanged: the service seals the stored token with that key, and a
+  different key cannot open it. The code stays used, so the agent cannot enroll again. The
+  command saves the token to a file that only its owner can read.
+
+The service listens on loopback only, and the `hivemind` command refuses a URL that is neither
+HTTPS nor loopback.
+
+## Who may do what
+
+The policy table answers one question: may this role take this action here? It reads the role,
+whether the session is released, whether the task is the session's own, and the states of the
+task and of the root.
+
+A session counts as **live** until it releases (see
+[state-machines.md](state-machines.md#sessions)). A **released** session gave its place back,
+so it keeps only the "any life" actions below. Starting a replacement follows the same edges as
+starting a member.
+
+**Planner**
+
+- Any life: read tasks and list members. Report moves on the root task, and fail it. Add a note
+  to any task. End itself.
+- Live only: create a child task while the root is `analyzing` or `implementing`. Edit a child
+  task's title or description while it is `planned`. Fail any open task. Start a challenger on
+  the root, or an implementer on a child task that is `planned` or `implementing` while the
+  root is open. End a member it started, or any member whose task is closed. Release itself.
+
+**Challenger**
+
+- Any life: read tasks and list members. Add a note to the root task. End itself.
+- Live only: release itself.
+
+**Implementer**
+
+- Any life: read tasks and list members. Report moves on its own child task. Fail it while it
+  is `planned` or `implementing`. Add a note to it. End itself once the task is closed.
+- Live only: start a reviewer on its own task while it is `implementing`. End a member it
+  started, once that member's task is closed. Release itself.
+
+**Reviewer**
+
+- Any life: read tasks and list members. Report moves on its own child task. Fail it while it
+  is `in_review`, `approved` or `merging`. Move its verification mode later. Add a note to it.
+  End itself once the task is closed.
+- Live only: start a verifier on its own task while it is `in_review`, `approved` or `merging`.
+  End a member it started. Release itself.
+
+**Verifier**
+
+- Any life: read tasks and list members. Report moves on its own child task. Fail it while it
+  is `verifying_before_merge` or `verifying_after_merge`. Add a note to it. End itself at any
+  time.
+- Live only: release itself.
+
+A person who owns the group, or an administrator, can fail any open task and can start a
+planner on the root task. Opening a group is the only place that starts a planner. See
+[who may fail a task](state-machines.md#who-may-fail-a-task) for the whole list.
+
+Each session is told its role in its prompt, along with the group, the task, the verification
+mode, who started it, seven standing rules, and the starter's instructions. It names the
+changeset only for the implementer, reviewer and verifier. Because a prompt can be ignored, the
+service checks every report against this table and the transition table anyway.
+
+## Storage
+
+One default workspace exists, but every row carries a workspace id. Storage is Postgres. By
+default the service starts an in-process Postgres that keeps its files in a data directory
+(`.hivemind`, or `HIVEMIND_DATA`). The same SQL and migrations also run on a Postgres server.
+
+| Table                  | Holds                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| `workspaces`, `people` | The workspace and its limits. People with the role `member` or `administrator`.       |
+| `operator_keys`        | Hashed keys, role, expiry, revocation.                                                |
+| `groups`               | Goal, budget, spend, the caps copied at creation, and the place counters.             |
+| `tasks`                | The root and child tasks, with `version`, `changeset_id` and `changeset_round`.       |
+| `task_events`          | The append-only history, numbered per group by `sequence`.                            |
+| `sessions`             | One row per session: role, `life`, token hash, platform reference, end intent, usage. |
+| `enrollment_codes`     | Hashed codes with expiry, attempts, and use.                                          |
+| `spawn_log`            | One row per start, which the spawn-rate cap counts.                                   |
+| `idempotency_keys`     | Every remembered request and its stored response.                                     |
+| `connections`          | Which adapter the workspace uses.                                                     |
+
+The database enforces what code must never break:
+
+- One root task per group.
+- At most one `starting`, `live` or `released` session per task and role, except for
+  challengers.
+- Task history is append-only: a trigger rejects every update and delete.
+- A closed task cannot change state: a trigger rejects it.
+- Checks on every enumeration, on `budget > 0`, on `spend >= 0`, and on every counter `>= 0`.
+- There is no check that `spend <= budget`. A later migration dropped it. A final usage reading
+  above the budget is stored, and it blocks the next start.
+
+Migrations are numbered SQL files and are forward only. See
+[ADR 0001](adr/0001-forward-only-sql-migrations.md). Checks are added as `NOT VALID` in one
+migration and validated in a later one, so no single file holds a long lock while the previous
+release is still serving.
+
+## Capacity and money
+
+### Places and locks
+
+A **place** is one unit of capacity. The counters live on the group and the workspace, and they
+change in the same transaction that inserts, ends, or releases a session. Two overlapping
+starts therefore cannot both take the last place. A CI job runs two clients against a Postgres
+server, competing for the last place, to prove it.
+
+A transaction that locks more than one of these takes the locks in one order: workspace, group,
+root task, child task, session. Tests pin the pairs that matter: group before root, root before
+child, task before session. A different order is how two requests deadlock.
+
+### Caps
+
+Caps are copied onto a group when it opens, so changing the workspace's limits later does not
+touch a group that already exists. A start or resume that would pass a cap fails with
+`cap_reached`, and the details name the cap, its limit, and the current value.
+
+| Cap                       | Default                                | Counts                             | Checked on        |
+| ------------------------- | -------------------------------------- | ---------------------------------- | ----------------- |
+| `live_sessions`           | 10                                     | Places in use in the group         | Start, resume     |
+| `live_per_role`           | planner 1, challenger 2, implementer 4 | Places in use by that role         | Start, resume     |
+| `live_per_task_role`      | reviewer 1, verifier 1                 | Live sessions on one task          | Start, resume     |
+| `spawn_rate`              | 6                                      | Starts in the last hour            | Start             |
+| `respawns_per_task_role`  | 3                                      | Replacements for one task and role | Replacement start |
+| `total_sessions`          | 50                                     | Every start, for ever              | Start             |
+| `workspace_live_sessions` | 50                                     | Places in use in the workspace     | Start, resume     |
+| `budget`                  | set per group, a positive decimal      | Spend so far                       | Start, resume     |
+
+A second session for the same role on the same task is a `conflict`, not a cap. Challengers are
+the exception.
+
+### Budget
+
+A group has a `budget`, and `spend` is what its agents have used so far, as a decimal string. A
+start or resume is refused once spend reaches the budget. A usage reading only ever adds the
+increase over what the service already stored for that session, so a reading never lowers it.
+
+The code has an owner-or-administrator "raise" and an administrator "correct", which may lower
+a budget but not below spend. No HTTP route calls either.
+
+**Intended.** A scheduled job reads the usage of every running session every five minutes and
+adds the increase to spend. An environment variable sets the interval. The job is a timer inside
+the service process on a worker node, and a Postgres lock makes sure only one node polls at a
+time. A final reading when a session ends counts the last stretch. Agents can work for days, so
+spend must not wait for a session to end. The first version only blocks new starts, once a poll
+has recorded that spend reached the budget. A start can still be accepted until the next poll
+records it. See [ADR 0005](adr/0005-spend-is-polled-while-sessions-run.md).
+
+**Planned after that.** When a poll shows spend over budget, the service blocks all new spawns,
+tells every running agent that the cap has been reached and that it should finish its work, and
+ends the agents still running after a five-minute grace period. A **reaper** role that ends
+agents whose context has rotted is a separate, later addition. The interval, timer and lock
+above, and everything in this paragraph, are not yet in an ADR.
+
+**Today.** Spend changes only when a session ends. A session that keeps running costs nothing
+as far as the service knows, so a group can pass its budget by any amount before the service
+notices. The budget stops new starts. It does not stop agents already running.
+
+## Surviving failure
+
+A platform call can fail after it succeeded: the agent started and the reply was lost. A
+request can be repeated. The process can stop between two steps. The design assumes all three
+and leaves a row that the next request can finish.
+
+### Idempotency
+
+A request that creates something or moves state takes an `Idempotency-Key` header. The service
+remembers the result under the key (workspace, caller kind, caller id, route, key) together
+with a hash of the body.
+
+| Same key and body         | Same key, different body | First request still running               |
+| ------------------------- | ------------------------ | ----------------------------------------- |
+| Returns the first result. | `idempotency_conflict`   | `request_in_progress`, or `start_pending` |
+
+The `hivemind` command reuses one key across its own retries within a run, and uses a new key
+for each new run. Enrollment is the exception: its key comes from the request, so a lost reply
+followed by a fresh run returns the same token, while the response key is unchanged.
+
+### Starting a session
+
+```mermaid
+sequenceDiagram
+  participant C as Caller
+  participant S as hivemind-svc
+  participant D as Database
+  participant P as Platform adapter
+  C->>S: start (role, task, instructions, Idempotency-Key)
+  S->>D: transaction 1: check every cap, insert the session as starting, take a place
+  S->>P: start (idempotency key is the session id)
+  alt the platform accepts
+    P-->>S: platform reference
+    S->>D: transaction 2: starting becomes live
+    S-->>C: 201 with the session
+  else the platform refuses
+    P-->>S: auth, invalid, quota or rate_limited
+    S->>D: start_failed, give the place back
+    S-->>C: the platform's error
+  else the platform did not answer
+    S-->>C: 202 start_pending
+    C->>S: retry with the same key
+    S->>P: find by key (session id)
+    P-->>S: found, absent or inconclusive
+  end
+```
+
+The first transaction does all the checking, so a start that fails a cap is rejected there and
+never reaches the platform. On success it writes the session, a spawn-log row, the place
+counts, the idempotency record, the enrollment code or token hash, and a `session_started`
+event. The platform call is outside any transaction, and its idempotency key is the session's
+own id.
+
+On a retry, the lookup by key decides what to do:
+
+- **found**: complete the start, as if the first reply had arrived.
+- **absent**: if an end was requested, finish it. Otherwise, unless something proves the
+  session exists, give the place back with `start_failed`. The new session's first
+  authenticated call, or its enrollment, counts as proof, even if the service never heard the
+  platform's reply.
+- **inconclusive**: change nothing, and answer `start_pending` again.
+
+### Ending a session
+
+```mermaid
+sequenceDiagram
+  participant C as Caller
+  participant S as hivemind-svc
+  participant D as Database
+  participant P as Platform adapter
+  C->>S: end (reason)
+  S->>D: transaction 1: record the end intent, void enrollment codes
+  S->>P: end (platform reference)
+  S->>D: transaction 2: life becomes ended, give the place back, keep an end receipt
+  S->>P: read usage
+  S->>D: transaction 3: add the usage increase to the group's spend
+  S-->>C: 200 with the session
+```
+
+The **end receipt** is the old token's hash, kept with the idempotency records. A session that
+never saw the reply can call end again with that token and learn the outcome, and nothing else
+accepts the token.
+
+### Where it can stop
+
+The process can stop after any committed step. Each stop leaves a row that the next request
+finishes:
+
+| The process stops after                                         | The row is                                   | The next request                                                                         |
+| --------------------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Reserving the place, before the platform call                   | `starting`, no platform reference            | A retry with the same key looks the session up by key. Found completes, absent gives up. |
+| The platform accepted the start, before the service recorded it | `starting`, and a platform session exists    | A retry finds it by key and completes the start.                                         |
+| Recording the end intent                                        | End requested, `life` unchanged              | A retry on either end route finishes the stop.                                           |
+| The platform stopped the session, before the row ended          | Stopped on the platform, row not yet `ended` | A retry repeats the stop, which every adapter must allow, then ends the row.             |
+
+A platform session can also appear after the service decided it did not exist, or after the row
+had already ended. Recovery looks again by key, stops it, and reads its usage. A stop that
+fails stays pending, and the next end or start retry picks it up.
+
+### Limits of the recovery
+
+A retry that arrives while the first start is still talking to the platform is kept pending by
+a set in process memory. A second service process would not see that set. The service runs as
+one process today.
+
+## Not built yet
+
+This list is the gap between what the code models and what a running system can do.
+
+1. **No messages between sessions, which is the project's main differentiator.** The policy
+   table has the rows. Still to build: a route and a command to send and read messages,
+   delivery through the platform adapter, a check that sender and recipient share a group, a
+   message event kind in the task history (a forward migration), and semantic routing. The
+   adapter's `send` is never called. See [ADR 0004](adr/0004-peer-messaging-within-a-group.md).
+2. **Spend is not tracked while sessions run.** Usage is read only when a session ends, so a
+   long-running agent can pass the budget unnoticed. No timer or scheduled job exists in the
+   service. The polling job comes first and only blocks starts. The over-budget response comes
+   after it: tell the running agents to finish, then end them after a five-minute grace period.
+   That response needs two things that do not exist yet. One is message delivery to running
+   sessions, since the adapter's `send` is never called (see item 1). The other is a record of
+   when the grace period ends, if it is to survive a restart. The reaper role comes later still.
+   See [ADR 0005](adr/0005-spend-is-polled-while-sessions-run.md).
+3. **No real platform.** The only adapter is the simulated one. It lives in the service's
+   process, hands out made-up addresses, and records sessions without running an agent. A local
+   run starts a planner that never reports. The tests are where a whole group runs.
+4. **A person can only open a group.** Every other route needs a session token. There is no way
+   over HTTP to read a group, fail a task, end a session, or change a budget, though the
+   services behind each accept a person as the actor.
+5. **Nothing starts a second planner.** A person starts the planner when opening a group, and
+   no policy row lets a session start one. A group whose planner ends cannot get another.
+6. **Platform status is never read.** The adapter's suspend, read status, read many and probe
+   are never called, and environment reports have a policy row but no route. So a session's
+   last status is never written, and a replacement works only for a session that is `ended` or
+   `start_failed`.
+7. **Three workspace limits are stored and never checked.** `live_groups`, `groups_per_day` and
+   `members_read_all`. Only `live_sessions` is enforced.
+8. **Task dependencies do nothing.** `depends_on` is validated, but HTTP always creates a task
+   with none, and no code orders work by it.
+9. **Group context is empty.** Context notes and per-group session settings (model tier,
+   repositories) exist in the model. HTTP never sets them, and the prompt does not include
+   notes.
+10. **A Postgres server is tested but not wired.** The server driver runs the same SQL and is
+    exercised by one CI job, but startup always uses the in-process Postgres.
+11. **Sign-in is a stub.** The `accounts` table exists, and a person's account id is always
+    null.

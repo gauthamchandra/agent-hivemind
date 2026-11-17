@@ -46,6 +46,15 @@ Also flag `NodeJS.*` namespace types for timers and APIs that have Web/`Bun.*` e
 - Tests with no meaningful `expect()`
 - Assertion-restating comments
 
+### Decisions
+
+Flag a pull request that meets the ADR bar in
+[CONTRIBUTING.md](../CONTRIBUTING.md#architecture-decisions) and neither adds a file under
+`docs/adr/` nor names an accepted ADR that already covers the change: a changed layer boundary
+or port, a changed meaning of a state machine or the policy table, a changed data-model
+invariant or migration approach, a new dependency, external system or authentication path, or a
+settled product-level decision.
+
 ### YAGNI
 
 Flag speculative helpers, config for values that never change, single-implementation
