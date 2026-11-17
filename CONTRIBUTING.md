@@ -14,6 +14,15 @@ they both describe.
   imports, and no non-null assertions.
 - **Tests travel with the change.** Co-locate `*.test.ts`. Cover error paths when you change
   behaviour. Every test needs a meaningful `expect()`.
+- **Shared test helpers.** Open databases, boot the service, and wait for async state through
+  `src/testing/` (`openMigratedDatabase()`, `bootService()`, `waitUntil()`), not through
+  copies in a test file. A Biome rule rejects `new PGlite(` outside `src/testing` and
+  `src/index.ts`. Teardown runs after every test, so a test needs no manual `close()` or
+  `stop()`.
+- **Missing values fail the test.** Use `requirePresent()` instead of `?? ''` or `!`, so a
+  missing value cannot let a later assertion pass for the wrong reason.
+- **Tests stand alone.** Tests may run in random order, so a test must not rely on another
+  test having run first.
 - **Lint is clean.** `bun run lint` must pass with zero errors and zero warnings before review.
 - **Small diffs.** Prefer the smallest change that solves the stated problem. No speculative
   scaffolding.

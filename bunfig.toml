@@ -1,7 +1,8 @@
 [test]
-coverage = true
+preload = ["./src/testing/setup.ts"]
 coverageReporter = ["text", "lcov"]
 coverageDir = "./coverage"
+randomize = true
 
 coverageExclude = [
   "**/*.test.ts",

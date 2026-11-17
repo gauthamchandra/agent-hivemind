@@ -1,21 +1,14 @@
-import { afterEach, expect, test } from 'bun:test';
-import { chmod, mkdir, mkdtemp, open, readFile, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { expect, test } from 'bun:test';
+import { chmod, mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PGlite } from '@electric-sql/pglite';
 import { runHivemind } from '@/cli/main.ts';
-import type { ServiceDeps } from '@/core/deps.ts';
-import { openInstallation } from '@/core/installation.ts';
-import { HivemindError } from '@/domain/errors.ts';
-import { createIds } from '@/domain/ids.ts';
-import { startHttp } from '@/http/server.ts';
-import { createSimulatedPlatform } from '@/platform/simulated/adapter.ts';
-import { manualClock } from '@/ports/clock.ts';
-import type { Platforms } from '@/ports/platform.ts';
-import { systemRandom } from '@/ports/random.ts';
-import { openPgliteStore } from '@/storage/postgres/store.ts';
+import { requirePresent } from '@/testing/assertions.ts';
+import { bootHttpService } from '@/testing/boot.ts';
+import { createTemporaryDirectory } from '@/testing/files.ts';
+import { bootstrapCreatorKey, createCheckoutGroup, expectStatus } from '@/testing/http.ts';
+import { enrollmentCodeIn, promptMentioning } from '@/testing/platforms.ts';
 
-export type Cli = {
+type Cli = {
   server: { stop(): void };
   io: {
     env: Record<string, string | undefined>;
@@ -30,46 +23,17 @@ export type Cli = {
   code: string;
 };
 
-const databases: PGlite[] = [];
+async function bootCli(): Promise<Cli> {
+  const service = await bootHttpService({ secretInjection: false });
+  const { server } = service;
+  const creatorKey = await bootstrapCreatorKey(server, service.bootstrap);
+  const created = await createCheckoutGroup(server, creatorKey, 'cli-group');
 
-afterEach(async () => {
-  const open = databases.splice(0);
+  expectStatus(created, 201);
 
-  await Promise.all(open.map(db => db.close()));
-});
-
-export async function bootCli(): Promise<Cli> {
-  const db = new PGlite();
-  databases.push(db);
-  await db.waitReady;
-  const clock = manualClock(new Date('2026-11-16T00:00:00.000Z'));
-  const store = openPgliteStore(db);
-  const deps: ServiceDeps = {
-    store,
-    clock,
-    random: systemRandom,
-    ids: createIds(clock, systemRandom),
-    responseKey: 'test-response-key',
-  };
-
-  await store.migrate();
-  const installation = await openInstallation(deps);
-  const connectionId = deps.ids.connection();
-  const simulated = createSimulatedPlatform(connectionId);
-
-  simulated.drop('secret_injection');
-
-  const platforms: Platforms = {
-    require(id) {
-      if (id !== connectionId) {
-        throw new HivemindError('not_found', 'No connection with that identifier exists.');
-      }
-
-      return { adapter: simulated.adapter, connection: simulated.connection() };
-    },
-  };
-  const server = await startHttp({ deps, platforms, connectionId });
-  const home = await mkdtemp(join(tmpdir(), 'hivemind-'));
+  const sessionId = String((created.body.session as { id: string }).id);
+  const code = enrollmentCodeIn(promptMentioning(service.simulated, sessionId));
+  const home = await createTemporaryDirectory();
   const out: string[] = [];
   const err: string[] = [];
   const io = {
@@ -86,48 +50,11 @@ export async function bootCli(): Promise<Cli> {
     fetch,
     sleep: async () => {},
   };
-  const admin = await fetch(`${server.url}/v1/bootstrap/administrator`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${installation.bootstrapSecret}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ display_name: 'Ada' }),
-  });
 
-  expect(admin.status).toBe(201);
-
-  const keyResponse = await fetch(`${server.url}/v1/bootstrap/keys`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${installation.bootstrapSecret}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ name: 'creator', role: 'creator' }),
-  });
-  const keyBody = (await keyResponse.json()) as { secret: string };
-  const created = await fetch(`${server.url}/v1/groups`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${keyBody.secret}`,
-      'content-type': 'application/json',
-      'idempotency-key': 'cli-group',
-    },
-    body: JSON.stringify({
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work.',
-    }),
-  });
-  const createdBody = (await created.json()) as { session: { id: string } };
-  const prompt = simulated.prompts().find(text => text.includes(createdBody.session.id)) ?? '';
-  const code = /Enrollment code: (enr_[A-Za-z0-9_-]+)/.exec(prompt)?.[1] ?? '';
-
-  return { server, io, out, err, sessionId: createdBody.session.id, code };
+  return { server, io, out, err, sessionId, code };
 }
 
-export async function enrolledCli(): Promise<Cli> {
+async function enrolledCli(): Promise<Cli> {
   const cli = await bootCli();
 
   expect(
@@ -142,7 +69,7 @@ export async function enrolledCli(): Promise<Cli> {
   return cli;
 }
 
-export async function rootTask(cli: Cli): Promise<{ id: string; version: number }> {
+async function rootTask(cli: Cli): Promise<{ id: string; version: number }> {
   const listed = await runHivemind({ ...cli.io, args: ['task', 'list', '--json'] });
 
   expect(listed).toBe(0);
@@ -152,10 +79,9 @@ export async function rootTask(cli: Cli): Promise<{ id: string; version: number 
   };
   const root = roots.tasks.find(task => task.parent_id === null);
 
-  expect(root).toBeDefined();
   cli.out.length = 0;
 
-  return root ?? { id: '', version: 0 };
+  return requirePresent(root, 'the group should have a root task');
 }
 
 test('enroll stores the token', async () => {
@@ -170,11 +96,12 @@ test('enroll stores the token', async () => {
   expect(cli.out).toEqual(['Enrolled.']);
   expect(cli.err).toEqual([]);
 
-  const stored = await readFile(join(cli.io.env.HIVEMIND_HOME ?? '', 'token'), 'utf8');
+  const stored = await readFile(
+    join(requirePresent(cli.io.env.HIVEMIND_HOME, 'the cli should have a home directory'), 'token'),
+    'utf8'
+  );
 
   expect(stored.startsWith('ses_')).toBe(true);
-
-  cli.server.stop();
 });
 test('whoami json reports the planner', async () => {
   const cli = await enrolledCli();
@@ -184,16 +111,12 @@ test('whoami json reports the planner', async () => {
   const who = JSON.parse(cli.out.join('\n')) as { role: string };
 
   expect(who.role).toBe('planner');
-
-  cli.server.stop();
 });
 test('task list includes the root', async () => {
   const cli = await enrolledCli();
   const root = await rootTask(cli);
 
   expect(root.id.startsWith('tsk_')).toBe(true);
-
-  cli.server.stop();
 });
 test('task move reports the transition', async () => {
   const cli = await enrolledCli();
@@ -218,8 +141,6 @@ test('task move reports the transition', async () => {
   ).toBe(0);
   expect(cli.out.join('\n')).toContain('Reported the transition.');
   expect(cli.err).toEqual([]);
-
-  cli.server.stop();
 });
 test('task create adds a child', async () => {
   const cli = await enrolledCli();
@@ -265,8 +186,6 @@ test('task create adds a child', async () => {
   };
 
   expect(tasks.tasks.some(task => task.parent_id !== null)).toBe(true);
-
-  cli.server.stop();
 });
 test('member start adds a challenger', async () => {
   const cli = await enrolledCli();
@@ -295,8 +214,6 @@ test('member start adds a challenger', async () => {
   const members = JSON.parse(cli.out.join('\n')) as { sessions: { role: string }[] };
 
   expect(members.sessions.map(session => session.role).sort()).toEqual(['challenger', 'planner']);
-
-  cli.server.stop();
 });
 test('release and resume talk to the service', async () => {
   const cli = await enrolledCli();
@@ -308,8 +225,6 @@ test('release and resume talk to the service', async () => {
 
   expect(await runHivemind({ ...cli.io, args: ['resume'] })).toBe(0);
   expect(cli.out.join('\n')).toContain('Resumed the session.');
-
-  cli.server.stop();
 });
 test('whoami without json prints the role', async () => {
   const cli = await enrolledCli();
@@ -317,8 +232,6 @@ test('whoami without json prints the role', async () => {
   expect(await runHivemind({ ...cli.io, args: ['whoami'] })).toBe(0);
   expect(cli.out.join('\n')).toContain('planner');
   expect(cli.out.join('\n')).not.toBe('whoami');
-
-  cli.server.stop();
 });
 test('a repeated enroll uses the same idempotency key', async () => {
   const keys: string[] = [];
@@ -406,7 +319,7 @@ test('an ipv6 loopback http address is a local endpoint', async () => {
 });
 
 test('an off-host http address is refused before the token is read', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'hivemind-http-'));
+  const home = await createTemporaryDirectory('hivemind-http-');
   let fetched = false;
 
   await mkdir(join(home, 'token'));
@@ -475,7 +388,7 @@ test('a credential request rejects redirects', async () => {
 });
 
 test('replacing an existing token file leaves it readable only by the owner', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'hivemind-token-mode-'));
+  const home = await createTemporaryDirectory('hivemind-token-mode-');
   const path = join(home, 'token');
 
   await writeFile(path, 'ses_old', { mode: 0o644 });
@@ -638,7 +551,7 @@ test('a flag without a value returns validation_failed', async () => {
 test('a missing token says to enroll', async () => {
   const err: string[] = [];
   let fetches = 0;
-  const home = await mkdtemp(join(tmpdir(), 'hivemind-notoken-'));
+  const home = await createTemporaryDirectory('hivemind-notoken-');
   const code = await runHivemind({
     args: ['whoami'],
     env: { HIVEMIND_URL: 'http://127.0.0.1:9', HIVEMIND_HOME: home },
@@ -662,7 +575,7 @@ test('a missing token says to enroll', async () => {
 test('a token file that cannot be read is not a network failure', async () => {
   const err: string[] = [];
   let fetches = 0;
-  const home = await mkdtemp(join(tmpdir(), 'hivemind-token-dir-'));
+  const home = await createTemporaryDirectory('hivemind-token-dir-');
 
   await mkdir(join(home, 'token'));
 
@@ -687,7 +600,7 @@ test('a token file that cannot be read is not a network failure', async () => {
 });
 test('a token file that cannot be read is not a usage error', async () => {
   const err: string[] = [];
-  const home = await mkdtemp(join(tmpdir(), 'hivemind-token-exit-'));
+  const home = await createTemporaryDirectory('hivemind-token-exit-');
 
   await mkdir(join(home, 'token'));
 

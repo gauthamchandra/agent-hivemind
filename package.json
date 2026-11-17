@@ -12,6 +12,7 @@
     "hivemind": "bun run src/cli/main.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",
+    "test:coverage": "bun test --coverage",
     "lint": "bunx tsc --noEmit && bunx biome check --error-on-warnings .",
     "lint:fix": "bunx tsc --noEmit && bunx biome check --write --error-on-warnings .",
     "format": "bunx biome format --write .",

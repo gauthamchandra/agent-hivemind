@@ -1,16 +1,40 @@
 import { expect, test } from 'bun:test';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { requirePresent } from '@/testing/assertions.ts';
+import { testResponseKey } from '@/testing/deps.ts';
+import { createTemporaryDirectory } from '@/testing/files.ts';
+import { bootstrapCreatorKey, createCheckoutGroup, expectStatus } from '@/testing/http.ts';
+import { runAfterTest } from '@/testing/teardown.ts';
 import { startHivemind } from './index.ts';
+
+/**
+ * Start hivemind-svc and stop it after the test, even when an assertion fails first.
+ *
+ * <p>Closing a PGlite database twice throws, so `stop` ignores calls after the first. That lets a
+ * test stop the service itself, as the restart test must, without the teardown stopping it again.
+ */
+async function startHivemindAfterTest(options: Parameters<typeof startHivemind>[0]) {
+  const started = await startHivemind(options);
+  let alreadyStopped = false;
+
+  async function stopOnce(): Promise<void> {
+    if (alreadyStopped) return;
+
+    alreadyStopped = true;
+    await started.stop();
+  }
+
+  runAfterTest(stopOnce);
+
+  return { ...started, stop: stopOnce };
+}
 
 test(
   'hivemind-svc answers health checks and shows the bootstrap key once',
   async () => {
-    const started = await startHivemind({
+    const started = await startHivemindAfterTest({
       port: 0,
       dataDir: null,
-      responseKey: 'test-response-key',
+      responseKey: testResponseKey,
     });
     const health = await fetch(`${started.url}/healthz`);
     const ready = await fetch(`${started.url}/readyz`);
@@ -18,83 +42,42 @@ test(
     expect(health.status).toBe(200);
     expect(ready.status).toBe(200);
     expect(started.bootstrapSecret?.startsWith('opk_')).toBe(true);
-
-    await started.stop();
   },
   // The first boot compiles PGlite. On CI that can take longer than Bun's 5 second default.
   { timeout: 20_000 }
 );
 
 test('a restarted process keeps the connection that existing groups use', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'hivemind-'));
-  const first = await startHivemind({
+  const directory = await createTemporaryDirectory();
+  const first = await startHivemindAfterTest({
     port: 0,
     dataDir: directory,
-    responseKey: 'test-response-key',
+    responseKey: testResponseKey,
   });
-  const admin = await fetch(`${first.url}/v1/bootstrap/administrator`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${first.bootstrapSecret}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ display_name: 'Ada' }),
-  });
+  const creatorKey = await bootstrapCreatorKey(
+    first,
+    requirePresent(first.bootstrapSecret, 'the first start should print a bootstrap key')
+  );
+  const created = await createCheckoutGroup(first, creatorKey, 'restart-group');
+  const createdBody = created.body as { group: { id: string; connection_id: string } };
 
-  expect(admin.status).toBe(201);
-
-  const keyResponse = await fetch(`${first.url}/v1/bootstrap/keys`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${first.bootstrapSecret}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ name: 'creator', role: 'creator' }),
-  });
-  const key = (await keyResponse.json()) as { secret: string };
-  const created = await fetch(`${first.url}/v1/groups`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${key.secret}`,
-      'content-type': 'application/json',
-      'idempotency-key': 'restart-group',
-    },
-    body: JSON.stringify({
-      name: 'Checkout',
-      goal: 'Move tax calculation behind an interface.',
-      budget: '100',
-      instructions: 'Plan the work.',
-    }),
-  });
-  const createdBody = (await created.json()) as { group: { id: string; connection_id: string } };
-
-  expect(created.status).toBe(201);
+  expectStatus(created, 201);
 
   await first.stop();
 
-  const second = await startHivemind({
+  const second = await startHivemindAfterTest({
     port: 0,
     dataDir: directory,
-    responseKey: 'test-response-key',
+    responseKey: testResponseKey,
   });
-  const again = await fetch(`${second.url}/v1/groups`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${key.secret}`,
-      'content-type': 'application/json',
-      'idempotency-key': 'restart-group-2',
-    },
-    body: JSON.stringify({
-      name: 'Payments',
-      goal: 'Record the second group after a restart.',
-      budget: '80',
-      instructions: 'Plan the payments work.',
-    }),
+  const again = await createCheckoutGroup(second, creatorKey, 'restart-group-2', {
+    name: 'Payments',
+    goal: 'Record the second group after a restart.',
+    budget: '80',
+    instructions: 'Plan the payments work.',
   });
-  const againBody = (await again.json()) as { group: { connection_id: string } };
+  const againBody = again.body as { group: { connection_id: string } };
 
-  expect(again.status).toBe(201);
+  expectStatus(again, 201);
   expect(againBody.group.connection_id).toBe(createdBody.group.connection_id);
-
-  await second.stop();
 });

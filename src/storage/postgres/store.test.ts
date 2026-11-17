@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
 import type { ReportActor, ServiceDeps } from '@/core/deps.ts';
 import { correctBudget, createGroup, raiseBudget } from '@/core/group-records.ts';
 import {
@@ -13,9 +13,7 @@ import {
 import { reportTransition } from '@/core/report-records.ts';
 import { createChildTask } from '@/core/task-records.ts';
 import { fingerprintText, renderContextNotes } from '@/domain/context.ts';
-import { type ErrorCode, HivemindError } from '@/domain/errors.ts';
 import {
-  createIds,
   defaultWorkspaceId,
   type GroupId,
   type PersonId,
@@ -30,43 +28,16 @@ import {
   type TaskState,
   type VerificationMode,
 } from '@/domain/model.ts';
-import { manualClock } from '@/ports/clock.ts';
 import type { RandomSource } from '@/ports/random.ts';
-import { openPgliteStore } from '@/storage/postgres/store.ts';
+import { expectHivemindError, requirePresent } from '@/testing/assertions.ts';
+import { createTestDeps, fixedRandom, type TestDeps } from '@/testing/deps.ts';
+import { note, passingCheckEvidence, pullRequestEvidence } from '@/testing/fixtures.ts';
+import { openEmptyDatabase, openMigratedDatabase } from '@/testing/pglite.ts';
 
-export const dayMs = 24 * 60 * 60 * 1000;
-export const note = 'Cited from the work that just finished.';
-export const address: EvidenceEntry[] = [
-  { label: 'pull request', kind: 'address', value: 'https://example.com/pr/1' },
-];
-export const description: EvidenceEntry[] = [
-  { label: 'check', kind: 'text', value: 'the suite passed' },
-];
-
-export function fixedRandom(byte: number): RandomSource {
-  return {
-    bytes(length) {
-      return new Uint8Array(length).fill(byte);
-    },
-  };
-}
-
-export function depsFor(
-  db: PGlite,
-  byte = 7,
-  start = '2026-11-16T00:00:00.000Z',
-  random: RandomSource = fixedRandom(byte)
-): ServiceDeps & {
-  clock: ReturnType<typeof manualClock>;
-} {
-  const clock = manualClock(new Date(start));
-  const store = openPgliteStore(db);
-
-  return { store, clock, random, ids: createIds(clock, random), responseKey: 'test-response-key' };
-}
+const dayMs = 24 * 60 * 60 * 1000;
 
 /** The first 32-byte draw is the bootstrap secret. Later secrets must differ or the hash collides. */
-export function bootstrapRandom(): RandomSource {
+function bootstrapRandom(): RandomSource {
   let secrets = 0;
 
   return {
@@ -82,30 +53,16 @@ export function bootstrapRandom(): RandomSource {
   };
 }
 
-export async function migrateEmpty(): Promise<{ db: PGlite; deps: ReturnType<typeof depsFor> }> {
-  const db = new PGlite();
-  await db.waitReady;
-  const deps = depsFor(db);
-  await deps.store.migrate();
+async function openMigratedDatabaseWithDeps(): Promise<{
+  db: PGlite;
+  deps: TestDeps;
+}> {
+  const db = await openMigratedDatabase();
 
-  return { db, deps };
+  return { db, deps: createTestDeps(db, { random: fixedRandom(7) }) };
 }
 
-export async function expectCode(work: Promise<unknown>, code: ErrorCode): Promise<HivemindError> {
-  try {
-    await work;
-  } catch (error) {
-    expect(error).toBeInstanceOf(HivemindError);
-    if (!(error instanceof HivemindError)) throw error;
-
-    expect(error.code).toBe(code);
-    return error;
-  }
-
-  throw new Error(`expected ${code}`);
-}
-
-export async function expectInvariants(db: PGlite, workspaceId: string): Promise<void> {
+async function expectInvariants(db: PGlite, workspaceId: string): Promise<void> {
   const tables = [
     'people',
     'operator_keys',
@@ -138,7 +95,7 @@ export async function expectInvariants(db: PGlite, workspaceId: string): Promise
   expect(below.rows[0]?.count).toBe(0);
 }
 
-export type Walk = {
+type Walk = {
   db: PGlite;
   deps: ServiceDeps;
   workspaceId: WorkspaceId;
@@ -152,12 +109,10 @@ export type Walk = {
   actor: (role: 'planner' | 'implementer' | 'reviewer' | 'verifier', live?: boolean) => ReportActor;
 };
 
-export async function prepareWalk(): Promise<Walk> {
-  const { db, deps } = await migrateEmpty();
+async function prepareWalk(): Promise<Walk> {
+  const { db, deps } = await openMigratedDatabaseWithDeps();
   const opened = await openInstallation(deps);
-  const secret = opened.bootstrapSecret;
-
-  if (secret === null) throw new Error('expected a bootstrap secret');
+  const secret = requirePresent(opened.bootstrapSecret, 'expected a bootstrap secret');
 
   const admin = await createFirstAdministrator(deps, {
     bootstrapSecret: secret,
@@ -180,7 +135,7 @@ export async function prepareWalk(): Promise<Walk> {
   return { db, deps, workspaceId, admin, sessions, actor };
 }
 
-export async function startGroup(ctx: Walk, mode: VerificationMode | null, goal: string) {
+async function startGroup(ctx: Walk, mode: VerificationMode | null, goal: string) {
   const notes = mode === null ? [{ name: 'Standards', body: 'Write the test first.' }] : [];
   const created = await createGroup(ctx.deps, {
     workspaceId: ctx.workspaceId,
@@ -221,12 +176,7 @@ export async function startGroup(ctx: Walk, mode: VerificationMode | null, goal:
   return { group: analyzed.group, root: analyzed.task };
 }
 
-export async function addChild(
-  ctx: Walk,
-  groupId: GroupId,
-  mode: VerificationMode | null,
-  title: string
-) {
+async function addChild(ctx: Walk, groupId: GroupId, mode: VerificationMode | null, title: string) {
   return createChildTask(ctx.deps, {
     workspaceId: ctx.workspaceId,
     groupId,
@@ -238,7 +188,7 @@ export async function addChild(
   });
 }
 
-export async function move(
+async function move(
   ctx: Walk,
   groupId: GroupId,
   task: { id: TaskId; version: number },
@@ -263,7 +213,7 @@ export async function move(
   return result;
 }
 
-export async function walkBefore(ctx: Walk) {
+async function walkBefore(ctx: Walk) {
   const before = await startGroup(ctx, 'before_merge', 'Ship the record before merge.');
   const beforeChild = await addChild(ctx, before.group.id, null, 'Store the task');
   await reportTransition(ctx.deps, {
@@ -287,7 +237,7 @@ export async function walkBefore(ctx: Walk) {
   );
   const eventsBeforeIllegal = await ctx.deps.store.events(ctx.workspaceId, before.group.id);
 
-  await expectCode(
+  await expectHivemindError(
     reportTransition(ctx.deps, {
       workspaceId: ctx.workspaceId,
       groupId: before.group.id,
@@ -296,7 +246,7 @@ export async function walkBefore(ctx: Walk) {
       actor: ctx.actor('implementer'),
       to: 'done',
       note,
-      evidence: address,
+      evidence: pullRequestEvidence,
       nextVerificationMode: null,
     }),
     'invalid_transition'
@@ -309,7 +259,7 @@ export async function walkBefore(ctx: Walk) {
     eventsBeforeIllegal.length
   );
 
-  await expectCode(
+  await expectHivemindError(
     reportTransition(ctx.deps, {
       workspaceId: ctx.workspaceId,
       groupId: before.group.id,
@@ -318,20 +268,21 @@ export async function walkBefore(ctx: Walk) {
       actor: ctx.actor('implementer'),
       to: 'in_review',
       note,
-      evidence: address,
+      evidence: pullRequestEvidence,
       nextVerificationMode: null,
     }),
     'conflict'
   );
 
   let task = implementing.task;
-  task = (await move(ctx, before.group.id, task, 'implementer', 'in_review', address)).task;
-  task = (await move(ctx, before.group.id, task, 'reviewer', 'approved', address)).task;
+  task = (await move(ctx, before.group.id, task, 'implementer', 'in_review', pullRequestEvidence))
+    .task;
+  task = (await move(ctx, before.group.id, task, 'reviewer', 'approved', pullRequestEvidence)).task;
   task = (await move(ctx, before.group.id, task, 'reviewer', 'verifying_before_merge', [])).task;
-  task = (await move(ctx, before.group.id, task, 'verifier', 'merging', description)).task;
-  task = (await move(ctx, before.group.id, task, 'reviewer', 'done', address)).task;
+  task = (await move(ctx, before.group.id, task, 'verifier', 'merging', passingCheckEvidence)).task;
+  task = (await move(ctx, before.group.id, task, 'reviewer', 'done', pullRequestEvidence)).task;
 
-  const closedAgain = await expectCode(
+  const closedAgain = await expectHivemindError(
     reportTransition(ctx.deps, {
       workspaceId: ctx.workspaceId,
       groupId: before.group.id,
@@ -360,7 +311,7 @@ export async function walkBefore(ctx: Walk) {
   return before;
 }
 
-export async function walkAfter(ctx: Walk) {
+async function walkAfter(ctx: Walk) {
   const after = await startGroup(ctx, 'after_merge', 'Ship the record after merge.');
   let afterTask = (await addChild(ctx, after.group.id, 'after_merge', 'Store the review')).task;
   await reportTransition(ctx.deps, {
@@ -375,14 +326,24 @@ export async function walkAfter(ctx: Walk) {
     nextVerificationMode: null,
   });
   afterTask = (await move(ctx, after.group.id, afterTask, 'implementer', 'implementing', [])).task;
-  afterTask = (await move(ctx, after.group.id, afterTask, 'implementer', 'in_review', address))
-    .task;
-  afterTask = (await move(ctx, after.group.id, afterTask, 'reviewer', 'approved', address)).task;
+  afterTask = (
+    await move(ctx, after.group.id, afterTask, 'implementer', 'in_review', pullRequestEvidence)
+  ).task;
+  afterTask = (
+    await move(ctx, after.group.id, afterTask, 'reviewer', 'approved', pullRequestEvidence)
+  ).task;
   afterTask = (await move(ctx, after.group.id, afterTask, 'reviewer', 'merging', [])).task;
   afterTask = (
-    await move(ctx, after.group.id, afterTask, 'reviewer', 'verifying_after_merge', address)
+    await move(
+      ctx,
+      after.group.id,
+      afterTask,
+      'reviewer',
+      'verifying_after_merge',
+      pullRequestEvidence
+    )
   ).task;
-  await move(ctx, after.group.id, afterTask, 'verifier', 'done', description);
+  await move(ctx, after.group.id, afterTask, 'verifier', 'done', passingCheckEvidence);
 
   const both = await startGroup(ctx, 'both', 'Check the branch and the merge.');
   let bothTask = (await addChild(ctx, both.group.id, 'both', 'Store both checks')).task;
@@ -398,22 +359,34 @@ export async function walkAfter(ctx: Walk) {
     nextVerificationMode: null,
   });
   bothTask = (await move(ctx, both.group.id, bothTask, 'implementer', 'implementing', [])).task;
-  bothTask = (await move(ctx, both.group.id, bothTask, 'implementer', 'in_review', address)).task;
+  bothTask = (
+    await move(ctx, both.group.id, bothTask, 'implementer', 'in_review', pullRequestEvidence)
+  ).task;
   bothTask = (await move(ctx, both.group.id, bothTask, 'reviewer', 'implementing', [])).task;
-  bothTask = (await move(ctx, both.group.id, bothTask, 'implementer', 'in_review', address)).task;
-  bothTask = (await move(ctx, both.group.id, bothTask, 'reviewer', 'approved', address)).task;
+  bothTask = (
+    await move(ctx, both.group.id, bothTask, 'implementer', 'in_review', pullRequestEvidence)
+  ).task;
+  bothTask = (await move(ctx, both.group.id, bothTask, 'reviewer', 'approved', pullRequestEvidence))
+    .task;
   bothTask = (await move(ctx, both.group.id, bothTask, 'reviewer', 'verifying_before_merge', []))
     .task;
   bothTask = (await move(ctx, both.group.id, bothTask, 'verifier', 'implementing', [])).task;
   expect(bothTask.state).toBe('implementing');
-  bothTask = (await move(ctx, both.group.id, bothTask, 'implementer', 'in_review', address)).task;
-  bothTask = (await move(ctx, both.group.id, bothTask, 'reviewer', 'approved', address)).task;
+  bothTask = (
+    await move(ctx, both.group.id, bothTask, 'implementer', 'in_review', pullRequestEvidence)
+  ).task;
+  bothTask = (await move(ctx, both.group.id, bothTask, 'reviewer', 'approved', pullRequestEvidence))
+    .task;
   bothTask = (await move(ctx, both.group.id, bothTask, 'reviewer', 'verifying_before_merge', []))
     .task;
-  bothTask = (await move(ctx, both.group.id, bothTask, 'verifier', 'merging', description)).task;
+  bothTask = (await move(ctx, both.group.id, bothTask, 'verifier', 'merging', passingCheckEvidence))
+    .task;
   bothTask = (await move(ctx, both.group.id, bothTask, 'reviewer', 'implementing', [])).task;
-  bothTask = (await move(ctx, both.group.id, bothTask, 'implementer', 'in_review', address)).task;
-  bothTask = (await move(ctx, both.group.id, bothTask, 'reviewer', 'approved', address)).task;
+  bothTask = (
+    await move(ctx, both.group.id, bothTask, 'implementer', 'in_review', pullRequestEvidence)
+  ).task;
+  bothTask = (await move(ctx, both.group.id, bothTask, 'reviewer', 'approved', pullRequestEvidence))
+    .task;
   const deferred = await move(
     ctx,
     both.group.id,
@@ -426,22 +399,38 @@ export async function walkAfter(ctx: Walk) {
   expect(deferred.task.verification_mode).toBe('after_merge');
   bothTask = deferred.task;
   bothTask = (
-    await move(ctx, both.group.id, bothTask, 'reviewer', 'verifying_after_merge', address)
+    await move(
+      ctx,
+      both.group.id,
+      bothTask,
+      'reviewer',
+      'verifying_after_merge',
+      pullRequestEvidence
+    )
   ).task;
   const bounced = await move(ctx, both.group.id, bothTask, 'verifier', 'implementing', []);
   expect(bounced.task.changeset_round).toBe(2);
-  bothTask = (await move(ctx, both.group.id, bounced.task, 'implementer', 'in_review', address))
+  bothTask = (
+    await move(ctx, both.group.id, bounced.task, 'implementer', 'in_review', pullRequestEvidence)
+  ).task;
+  bothTask = (await move(ctx, both.group.id, bothTask, 'reviewer', 'approved', pullRequestEvidence))
     .task;
-  bothTask = (await move(ctx, both.group.id, bothTask, 'reviewer', 'approved', address)).task;
   bothTask = (await move(ctx, both.group.id, bothTask, 'reviewer', 'merging', [])).task;
   bothTask = (
-    await move(ctx, both.group.id, bothTask, 'reviewer', 'verifying_after_merge', address)
+    await move(
+      ctx,
+      both.group.id,
+      bothTask,
+      'reviewer',
+      'verifying_after_merge',
+      pullRequestEvidence
+    )
   ).task;
-  await move(ctx, both.group.id, bothTask, 'verifier', 'done', description);
+  await move(ctx, both.group.id, bothTask, 'verifier', 'done', passingCheckEvidence);
   return bothRoot;
 }
 
-export async function walkFailed(
+async function walkFailed(
   ctx: Walk,
   before: { group: { id: GroupId } },
   bothRoot: { task: { state: string } }
@@ -455,7 +444,7 @@ export async function walkFailed(
     actor: ctx.actor('planner'),
     to: 'done',
     note,
-    evidence: address,
+    evidence: pullRequestEvidence,
     nextVerificationMode: null,
   });
   expect(soloDone.task.state).toBe('done');
@@ -503,8 +492,7 @@ export async function walkFailed(
 }
 
 test('a new database has none of the product tables', async () => {
-  const db = new PGlite();
-  await db.waitReady;
+  const db = await openEmptyDatabase();
   const found = await db.query<{ count: number }>(
     `SELECT count(*)::int AS count
        FROM information_schema.tables
@@ -513,13 +501,14 @@ test('a new database has none of the product tables', async () => {
   );
 
   expect(found.rows[0]?.count).toBe(0);
-  await db.close();
 });
 test('the migration files apply once to an empty database', async () => {
-  const { db, deps } = await migrateEmpty();
+  const db = await openEmptyDatabase();
+  const deps = createTestDeps(db, { random: fixedRandom(7) });
   const directory = fileURLToPath(new URL('./migrations/', import.meta.url));
   const files = (await readdir(directory)).filter(name => name.endsWith('.sql')).sort();
 
+  await deps.store.migrate();
   await deps.store.migrate();
 
   const applied = await db.query<{ name: string }>(
@@ -532,13 +521,10 @@ test('the migration files apply once to an empty database', async () => {
 
   expect(applied.rows.map(row => row.name)).toEqual(files);
   expect(workspaces.rows[0]?.count).toBe(0);
-  await db.close();
 });
 test('the bootstrap key is shown once and creates the first local administrator', async () => {
-  const db = new PGlite();
-  await db.waitReady;
-  const deps = depsFor(db, 7, '2026-11-16T00:00:00.000Z', bootstrapRandom());
-  await deps.store.migrate();
+  const db = await openMigratedDatabase();
+  const deps = createTestDeps(db, { random: bootstrapRandom() });
   const opened = await openInstallation(deps);
   const again = await openInstallation(deps);
   const expectedSecret = `opk_${Buffer.from(new Uint8Array(32).fill(7)).toString('base64url')}`;
@@ -547,10 +533,9 @@ test('the bootstrap key is shown once and creates the first local administrator'
   expect(opened.bootstrapSecret).toBe(expectedSecret);
   expect(again.bootstrapSecret).toBeNull();
 
-  const secret = opened.bootstrapSecret;
-  if (secret === null) throw new Error('expected a bootstrap secret');
+  const secret = requirePresent(opened.bootstrapSecret, 'expected a bootstrap secret');
 
-  await expectCode(
+  await expectHivemindError(
     createOperatorKey(deps, {
       bootstrapSecret: secret,
       name: 'daily',
@@ -570,7 +555,7 @@ test('the bootstrap key is shown once and creates the first local administrator'
   expect(person.display_name).toBe('Ada');
   expect(person.workspace_id).toBe(opened.workspace.id);
 
-  await expectCode(
+  await expectHivemindError(
     createFirstAdministrator(deps, { bootstrapSecret: secret, displayName: 'Ada again' }),
     'conflict'
   );
@@ -587,7 +572,7 @@ test('the bootstrap key is shown once and creates the first local administrator'
   expect(created.record.key_hash).toBe(createHash('sha256').update(created.secret).digest('hex'));
   expect(JSON.stringify(created.record)).not.toContain(created.secret);
 
-  await expectCode(
+  await expectHivemindError(
     createOperatorKey(deps, {
       bootstrapSecret: secret,
       name: 'nope',
@@ -598,26 +583,22 @@ test('the bootstrap key is shown once and creates the first local administrator'
   );
 
   await expectInvariants(db, opened.workspace.id);
-  await db.close();
 });
 test('a person needs a display name a reader can see', async () => {
-  const db = new PGlite();
-  await db.waitReady;
-  const deps = depsFor(db, 7, '2026-11-16T00:00:00.000Z', bootstrapRandom());
-  await deps.store.migrate();
+  const db = await openMigratedDatabase();
+  const deps = createTestDeps(db, { random: bootstrapRandom() });
   const opened = await openInstallation(deps);
-  const secret = opened.bootstrapSecret;
-  if (secret === null) throw new Error('expected a bootstrap secret');
+  const secret = requirePresent(opened.bootstrapSecret, 'expected a bootstrap secret');
 
-  const blank = await expectCode(
+  const blank = await expectHivemindError(
     createFirstAdministrator(deps, { bootstrapSecret: secret, displayName: ' \n\t ' }),
     'validation_failed'
   );
-  const empty = await expectCode(
+  const empty = await expectHivemindError(
     createFirstAdministrator(deps, { bootstrapSecret: secret, displayName: '' }),
     'validation_failed'
   );
-  const tooLong = await expectCode(
+  const tooLong = await expectHivemindError(
     createFirstAdministrator(deps, {
       bootstrapSecret: secret,
       displayName: ` ${'A'.repeat(201)} `,
@@ -635,49 +616,42 @@ test('a person needs a display name a reader can see', async () => {
   });
 
   expect(person.display_name).toBe('A'.repeat(200));
-  await db.close();
 });
 test('the bootstrap key stops working 24 hours after it is created', async () => {
-  const db = new PGlite();
-  await db.waitReady;
-  const deps = depsFor(db, 9);
-  await deps.store.migrate();
+  const db = await openMigratedDatabase();
+  const deps = createTestDeps(db, { random: fixedRandom(9) });
   const opened = await openInstallation(deps);
-  const secret = opened.bootstrapSecret;
-  if (secret === null) throw new Error('expected a bootstrap secret');
+  const secret = requirePresent(opened.bootstrapSecret, 'expected a bootstrap secret');
 
   deps.clock.advance(dayMs);
 
-  await expectCode(
+  await expectHivemindError(
     createFirstAdministrator(deps, { bootstrapSecret: secret, displayName: 'Ada' }),
     'unauthenticated'
   );
-  await db.close();
 });
 test('an expired unused bootstrap key does not block a new one', async () => {
-  const db = new PGlite();
-  await db.waitReady;
+  const db = await openMigratedDatabase();
   let draw = 0;
-  const deps = depsFor(db, 3, '2026-11-16T00:00:00.000Z', {
-    bytes(length) {
-      draw += 1;
+  const deps = createTestDeps(db, {
+    random: {
+      bytes(length) {
+        draw += 1;
 
-      return new Uint8Array(length).fill(draw);
+        return new Uint8Array(length).fill(draw);
+      },
     },
   });
-  await deps.store.migrate();
   const opened = await openInstallation(deps);
-  const first = opened.bootstrapSecret;
-  if (first === null) throw new Error('expected a bootstrap secret');
+  const first = requirePresent(opened.bootstrapSecret, 'expected a bootstrap secret');
 
   deps.clock.advance(dayMs);
 
   const again = await openInstallation(deps);
-  const second = again.bootstrapSecret;
-  if (second === null) throw new Error('expected a replacement bootstrap secret');
+  const second = requirePresent(again.bootstrapSecret, 'expected a replacement bootstrap secret');
 
   expect(second).not.toBe(first);
-  await expectCode(
+  await expectHivemindError(
     createFirstAdministrator(deps, { bootstrapSecret: first, displayName: 'Ada' }),
     'unauthenticated'
   );
@@ -690,21 +664,18 @@ test('an expired unused bootstrap key does not block a new one', async () => {
 
   expect(person.display_name).toBe('Ada');
   expect(quiet.bootstrapSecret).toBeNull();
-  await db.close();
 });
 test('a group walks every permitted path, and a closed task stays closed', async () => {
   const ctx = await prepareWalk();
   const before = await walkBefore(ctx);
   const bothRoot = await walkAfter(ctx);
   await walkFailed(ctx, before, bothRoot);
-  await ctx.db.close();
 });
 
 test('a budget never drops below spend except by a recorded administrator correction', async () => {
-  const { db, deps } = await migrateEmpty();
+  const { db, deps } = await openMigratedDatabaseWithDeps();
   const opened = await openInstallation(deps);
-  const secret = opened.bootstrapSecret;
-  if (secret === null) throw new Error('expected a bootstrap secret');
+  const secret = requirePresent(opened.bootstrapSecret, 'expected a bootstrap secret');
 
   const admin = await createFirstAdministrator(deps, {
     bootstrapSecret: secret,
@@ -730,7 +701,7 @@ test('a budget never drops below spend except by a recorded administrator correc
 
   await db.query(`UPDATE groups SET spend = 5 WHERE id = $1`, [created.group.id]);
 
-  await expectCode(
+  await expectHivemindError(
     raiseBudget(deps, {
       workspaceId: opened.workspace.id,
       groupId: created.group.id,
@@ -740,7 +711,7 @@ test('a budget never drops below spend except by a recorded administrator correc
     }),
     'validation_failed'
   );
-  await expectCode(
+  await expectHivemindError(
     correctBudget(deps, {
       workspaceId: opened.workspace.id,
       groupId: created.group.id,
@@ -760,7 +731,7 @@ test('a budget never drops below spend except by a recorded administrator correc
   });
   expect(raised.budget).toBe('12');
 
-  await expectCode(
+  await expectHivemindError(
     correctBudget(deps, {
       workspaceId: opened.workspace.id,
       groupId: created.group.id,
@@ -787,13 +758,11 @@ test('a budget never drops below spend except by a recorded administrator correc
   expect(correction?.data.budget_after).toBe('5');
 
   await expectInvariants(db, opened.workspace.id);
-  await db.close();
 });
 test('the database keeps one root task and refuses to rewrite an event', async () => {
-  const { db, deps } = await migrateEmpty();
+  const { db, deps } = await openMigratedDatabaseWithDeps();
   const opened = await openInstallation(deps);
-  const secret = opened.bootstrapSecret;
-  if (secret === null) throw new Error('expected a bootstrap secret');
+  const secret = requirePresent(opened.bootstrapSecret, 'expected a bootstrap secret');
   const admin = await createFirstAdministrator(deps, {
     bootstrapSecret: secret,
     displayName: 'Ada',
@@ -843,14 +812,12 @@ test('the database keeps one root task and refuses to rewrite an event', async (
   }
 
   expect(rewriteFailed).toBe(true);
-  await db.close();
 });
 
 test('the root closes when it enters implementing after every child is done', async () => {
-  const { db, deps } = await migrateEmpty();
+  const { deps } = await openMigratedDatabaseWithDeps();
   const opened = await openInstallation(deps);
-  const secret = opened.bootstrapSecret;
-  if (secret === null) throw new Error('expected a bootstrap secret');
+  const secret = requirePresent(opened.bootstrapSecret, 'expected a bootstrap secret');
 
   const admin = await createFirstAdministrator(deps, {
     bootstrapSecret: secret,
@@ -899,11 +866,11 @@ test('the root closes when it enters implementing after every child is done', as
     evidence: EvidenceEntry[];
   }[] = [
     { role: 'implementer', to: 'implementing', evidence: [] },
-    { role: 'implementer', to: 'in_review', evidence: address },
-    { role: 'reviewer', to: 'approved', evidence: address },
+    { role: 'implementer', to: 'in_review', evidence: pullRequestEvidence },
+    { role: 'reviewer', to: 'approved', evidence: pullRequestEvidence },
     { role: 'reviewer', to: 'verifying_before_merge', evidence: [] },
-    { role: 'verifier', to: 'merging', evidence: description },
-    { role: 'reviewer', to: 'done', evidence: address },
+    { role: 'verifier', to: 'merging', evidence: passingCheckEvidence },
+    { role: 'reviewer', to: 'done', evidence: pullRequestEvidence },
   ];
   const sessions = { implementer, reviewer, verifier };
 
@@ -947,13 +914,11 @@ test('the root closes when it enters implementing after every child is done', as
   expect(moved.task.state).toBe('done');
   expect(root?.state).toBe('done');
   expect((await deps.store.group(workspaceId, created.group.id))?.status).toBe('closed');
-  await db.close();
 });
 test('saved platform settings come back on read', async () => {
-  const { db, deps } = await migrateEmpty();
+  const { deps } = await openMigratedDatabaseWithDeps();
   const opened = await openInstallation(deps);
-  const secret = opened.bootstrapSecret;
-  if (secret === null) throw new Error('expected a bootstrap secret');
+  const secret = requirePresent(opened.bootstrapSecret, 'expected a bootstrap secret');
 
   const admin = await createFirstAdministrator(deps, {
     bootstrapSecret: secret,
@@ -991,5 +956,4 @@ test('saved platform settings come back on read', async () => {
   const read = await deps.store.group(opened.workspace.id, group.id);
 
   expect(read?.session_settings).toEqual(group.session_settings);
-  await db.close();
 });

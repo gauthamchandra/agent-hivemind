@@ -77,6 +77,7 @@ surface and keep scaffolding thin until real domain code lands.
 
 - `bun test` — unit tests (`bun:test` only)
 - `bun test --watch` — watch mode
+- `bun run test:coverage` — coverage report (off by default)
 
 ### Code quality
 
@@ -137,6 +138,21 @@ import { test, expect, mock, spyOn } from 'bun:test';
 - Never use `expect(true).toBe(false)` as an unreachable sentinel — use `rejects`
 - Never wrap assertions in `if` blocks (conditional asserts silently pass)
 - Prefer exact matches and specific matchers over vague `toBeDefined()` when the value is known
+
+### Shared test helpers
+
+The rules are in [CONTRIBUTING.md](CONTRIBUTING.md). The mechanics:
+
+- Open a database with `openMigratedDatabase()` from `@/testing/pglite.ts`. It restores a
+  migrated snapshot in about 100ms. Use `openEmptyDatabase()` only when the test needs no
+  tables: a fresh instance costs about 650ms. Biome rejects `new PGlite(`.
+- Check `src/testing/` before writing setup code. When a second test file needs the same
+  boot, HTTP call, fixture, or polling loop, add it there.
+- A preload hook (`src/testing/setup.ts`) runs teardown after each test. Register cleanup
+  with `runAfterTest()` instead of closing or stopping at the end of the test, which a
+  failed assertion skips.
+- Do not use `test.concurrent`. PGlite is WASM on one thread, so it gives no speedup
+  (measured), and the shared teardown assumes one test runs at a time.
 
 ### Test-driven development
 
