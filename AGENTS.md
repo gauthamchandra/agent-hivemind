@@ -33,6 +33,8 @@ Opt-in workflow skills, also under `.agents/skills/`:
   implementing review suggestions.
 - **[holistic-review-resolution](.agents/skills/holistic-review-resolution/SKILL.md)** —
   when addressing review comments, findings, or a repeated review iteration.
+- **[ponytail](.agents/skills/ponytail/SKILL.md)** — when a coding task should stay
+  the smallest change that still finishes it.
 
 ## Writing
 

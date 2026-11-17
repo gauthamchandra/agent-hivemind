@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { afterEach, expect, test } from 'bun:test';
 import { chmod, mkdir, mkdtemp, open, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,8 +30,17 @@ type Cli = {
   code: string;
 };
 
+const databases: PGlite[] = [];
+
+afterEach(async () => {
+  const open = databases.splice(0);
+
+  await Promise.all(open.map(db => db.close()));
+});
+
 async function bootCli(): Promise<Cli> {
   const db = new PGlite();
+  databases.push(db);
   await db.waitReady;
   const clock = manualClock(new Date('2026-11-16T00:00:00.000Z'));
   const store = openPgliteStore(db);

@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { afterEach, expect, test } from 'bun:test';
 import { PGlite } from '@electric-sql/pglite';
 import type { ServiceDeps } from '@/core/deps.ts';
 import {
@@ -34,9 +34,17 @@ import type { UnitOfWork } from '@/ports/storage.ts';
 import { openPgliteStore } from '@/storage/postgres/store.ts';
 
 const note = 'Cited from the work that just finished.';
+const databases: PGlite[] = [];
+
+afterEach(async () => {
+  const open = databases.splice(0);
+
+  await Promise.all(open.map(db => db.close()));
+});
 
 async function boot() {
   const db = new PGlite();
+  databases.push(db);
   await db.waitReady;
   const clock = manualClock(new Date('2026-11-16T00:00:00.000Z'));
   const store = openPgliteStore(db);
