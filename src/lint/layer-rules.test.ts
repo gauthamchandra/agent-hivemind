@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { unlink } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { runAfterTest } from '@/testing/teardown.ts';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const biome = fileURLToPath(new URL('../../node_modules/.bin/biome', import.meta.url));
@@ -16,12 +17,19 @@ const forwardMigration = new URL(
 const directDatabase = new URL('../storage/postgres/direct-database.fixture.ts', import.meta.url);
 const sharedDatabase = new URL('../storage/postgres/shared-database.fixture.ts', import.meta.url);
 
+// Biome 2.6.8 does not print lint or plugin diagnostics for `--stdin-file-path`.
+// The fixture is a real file. `.gitignore` hides it from `biome check .`, and
+// tsconfig excludes it from `tsc`. This command turns the gitignore off so the
+// path rules still run.
 async function check(path: URL): Promise<{ code: number; output: string }> {
-  const proc = Bun.spawn([biome, 'check', '--error-on-warnings', fileURLToPath(path)], {
-    cwd: root,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
+  const proc = Bun.spawn(
+    [biome, 'check', '--error-on-warnings', '--vcs-use-ignore-file=false', fileURLToPath(path)],
+    {
+      cwd: root,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    }
+  );
   const output = `${await new Response(proc.stdout).text()}${await new Response(proc.stderr).text()}`;
   const code = await proc.exited;
 
@@ -29,6 +37,26 @@ async function check(path: URL): Promise<{ code: number; output: string }> {
 }
 
 describe('biome layer rules', () => {
+  test('a fixture written under src is invisible to a full biome check', async () => {
+    runAfterTest(() => unlink(platformName).catch(() => undefined));
+
+    await Bun.write(
+      platformName,
+      `export const platform = 'devin';\nexport const title = 'Cursor refactor';\n`
+    );
+
+    const proc = Bun.spawn([biome, 'check', '--error-on-warnings', '.'], {
+      cwd: root,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const output = `${await new Response(proc.stdout).text()}${await new Response(proc.stderr).text()}`;
+    const code = await proc.exited;
+
+    expect(code).toBe(0);
+    expect(output).not.toContain('platform-name.fixture.ts');
+  });
+
   test('a multiline forbidden import and a platform name fail, and a group title does not', async () => {
     await Bun.write(
       forbiddenImport,

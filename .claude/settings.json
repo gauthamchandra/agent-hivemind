@@ -5,7 +5,6 @@
       "Bash(bun install)",
       "Bash(bun install --frozen-lockfile)",
       "Bash(bun test:*)",
-      "Bash(bun run build:*)",
       "Bash(bun run dev:*)",
       "Bash(bun run format:*)",
       "Bash(bun run lint:*)",

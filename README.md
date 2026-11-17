@@ -1,6 +1,8 @@
 # agent-hivemind
 
-Bun + TypeScript application with harness-agnostic agent guardrails.
+hivemind-svc records a group's tasks and the agent sessions that work them. The record
+is a PGlite database. `bun run start` serves the HTTP API. `bun run hivemind` is the
+client for that API.
 
 ## Quick start
 
@@ -8,10 +10,29 @@ Bun + TypeScript application with harness-agnostic agent guardrails.
 bun install
 bun test
 bun run lint
-bun run dev
+HIVEMIND_RESPONSE_KEY=dev-key bun run dev
 ```
 
-Requires [Bun](https://bun.sh) **1.3.4** (see `.tool-versions`).
+Requires [Bun](https://bun.sh) **1.3.4** (see `.tool-versions`). The service refuses to
+start when `HIVEMIND_RESPONSE_KEY` is unset. The first start prints a bootstrap key, once.
+
+| Variable                | What it does                                                                        |
+| ----------------------- | ----------------------------------------------------------------------------------- |
+| `HIVEMIND_RESPONSE_KEY` | Required. The service will not start without it.                                    |
+| `PORT`                  | Listen port. Unset uses an ephemeral port.                                          |
+| `HIVEMIND_DATA`         | Directory for the PGlite record. Defaults to `.hivemind`.                           |
+| `HIVEMIND_POSTGRES_URL` | Connection string for the PostgreSQL spawn-gate test. The service does not read it. |
+
+## Client
+
+`bun run hivemind` commands are `enroll`, `whoami`, `task`, `member`, `release`, and
+`resume`.
+
+| Variable         | What it does                                                             |
+| ---------------- | ------------------------------------------------------------------------ |
+| `HIVEMIND_URL`   | Required service address. Use `https`, or `http` on loopback.            |
+| `HIVEMIND_HOME`  | Directory for the saved token. Defaults to `~/.hivemind`.                |
+| `HIVEMIND_TOKEN` | Token for this run. When unset, the client reads `$HIVEMIND_HOME/token`. |
 
 ## Agent tooling
 
