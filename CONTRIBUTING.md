@@ -23,9 +23,48 @@ they both describe.
   missing value cannot let a later assertion pass for the wrong reason.
 - **Tests stand alone.** Tests may run in random order, so a test must not rely on another
   test having run first.
+- **Docs travel with the change.** A change to a transition row, a policy rule, or a session's
+  life updates [`docs/state-machines.md`](docs/state-machines.md) in the same pull request. A
+  change to a layer boundary or a port updates [`docs/architecture.md`](docs/architecture.md).
+- **Architectural changes have an ADR.** A change that meets the bar in
+  [Architecture decisions](#architecture-decisions) needs a decision record. The pull request
+  either adds one or names an accepted ADR that already covers the decision. With neither, it
+  is not ready for review.
 - **Lint is clean.** `bun run lint` must pass with zero errors and zero warnings before review.
 - **Small diffs.** Prefer the smallest change that solves the stated problem. No speculative
   scaffolding.
+
+---
+
+## Architecture decisions
+
+A change that settles something a later contributor would otherwise reopen needs an
+architecture decision record (ADR) in [`docs/adr/`](docs/adr/). Add it in the same pull request
+as the first code that depends on it, or before.
+
+A pull request that builds on an ADR accepted earlier needs no new one when that ADR already
+covers the decision. It names the ADR in its description. If the change goes beyond what the
+ADR decided, update that ADR or add a new one.
+
+Write an ADR when the change:
+
+- adds, removes or moves a layer boundary, or adds or changes a port;
+- changes what a state machine or the policy table means. A new state, a new role, or a new
+  rule about who may do what counts. A row that follows an existing pattern does not;
+- changes a data-model invariant, or how migrations run;
+- adds a runtime dependency, an external system, or a new way for a person or an agent to
+  authenticate;
+- settles a product-level question, such as how agents communicate, who approves a change, or
+  how spend is measured.
+
+A bug fix, a refactor that keeps the boundaries, and a change that follows an existing pattern
+need no ADR. When in doubt, write one. They are short.
+
+Name the file with the next number, `NNNN-short-name.md`. Follow
+[ADR 0001](docs/adr/0001-forward-only-sql-migrations.md) and the document shape in the
+write-for-humans skill: status, why, the decision, tenets, what it rules out, consequences,
+rollout. An ADR can be accepted before its code exists. Say so in its status. Other docs, such
+as `docs/architecture.md`, link to the ADR and do not repeat its reasoning.
 
 ---
 
