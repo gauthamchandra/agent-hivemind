@@ -1,12 +1,13 @@
 import type { ServiceDeps } from '@/core/deps.ts';
-import { lockOwned, randomText, requireText, rootTask } from '@/core/session-rows.ts';
+import { requireBoundedText, requireRoot } from '@/core/record-checks.ts';
+import { lockOwned, randomText } from '@/core/session-lock.ts';
+import { findOnPlatform } from '@/core/session-platform.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { PersonId, SessionId, WorkspaceId } from '@/domain/ids.ts';
 import type { SessionRecord } from '@/domain/model.ts';
 import { isClosedState } from '@/domain/model.ts';
-import { PlatformError } from '@/domain/platform.ts';
 import { formatTime } from '@/domain/time.ts';
-import { evaluatePolicy } from '@/policy/policy.ts';
+import { requireAllowed } from '@/policy/policy.ts';
 import type { Platforms } from '@/ports/platform.ts';
 import type { UnitOfWork } from '@/ports/storage.ts';
 
@@ -23,7 +24,7 @@ export async function recordEndIntent(
     reason: string;
   }
 ): Promise<{ finished: boolean; session: SessionRecord }> {
-  const reason = requireText(input.reason, 'reason', 4 * 1024);
+  const reason = requireBoundedText(input.reason, 'reason', 4 * 1024);
   const session = await lockOwned(tx, input.workspaceId, input.sessionId);
 
   if (
@@ -65,27 +66,7 @@ export async function attachPlatformRef(
   platforms: Platforms,
   session: SessionRecord
 ): Promise<SessionRecord> {
-  const group = await deps.store.group(session.workspace_id, session.group_id);
-
-  if (group === null) {
-    throw new HivemindError('not_found', 'No group with that identifier is in this workspace.');
-  }
-
-  const handle = platforms.require(group.connection_id);
-  let found: Awaited<ReturnType<typeof handle.adapter.findByKey>>;
-
-  try {
-    found = await handle.adapter.findByKey(handle.connection, session.id, session.created_at);
-  } catch (error) {
-    if (error instanceof PlatformError) {
-      throw new HivemindError(
-        'unavailable',
-        'The platform did not say whether the session exists.'
-      );
-    }
-
-    throw error;
-  }
+  const found = await findOnPlatform(deps, platforms, session);
 
   if (found.outcome === 'inconclusive') {
     throw new HivemindError('unavailable', 'The platform did not say whether the session exists.');
@@ -145,7 +126,7 @@ async function authorizeEnd(
   }
 
   if (actor.sessionId === target.id) {
-    const decision = evaluatePolicy({
+    requireAllowed({
       role: target.role,
       action: 'end_self',
       released: target.life === 'released',
@@ -155,18 +136,11 @@ async function authorizeEnd(
       rootState:
         task.parent_id === null
           ? task.state
-          : (await rootTask(tx, workspaceId, target.group_id)).state,
+          : (await requireRoot(tx, workspaceId, target.group_id)).state,
       targetRole: target.role,
       targetStartedByCaller: false,
       targetTaskClosed: isClosedState(task.state),
     });
-
-    if (!decision.allowed) {
-      throw new HivemindError('policy_denied', decision.message, {
-        role: decision.role,
-        action: decision.action,
-      });
-    }
 
     return;
   }
@@ -187,8 +161,9 @@ async function authorizeEnd(
     );
   }
 
-  const root = await rootTask(tx, workspaceId, target.group_id);
-  const decision = evaluatePolicy({
+  const root = await requireRoot(tx, workspaceId, target.group_id);
+
+  requireAllowed({
     role: caller.role,
     action: 'end_other',
     released: false,
@@ -200,11 +175,4 @@ async function authorizeEnd(
     targetStartedByCaller: target.parent_session_id === caller.id,
     targetTaskClosed: isClosedState(task.state),
   });
-
-  if (!decision.allowed) {
-    throw new HivemindError('policy_denied', decision.message, {
-      role: decision.role,
-      action: decision.action,
-    });
-  }
 }

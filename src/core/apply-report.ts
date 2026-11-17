@@ -1,5 +1,6 @@
+import { appendEvent } from '@/core/append-event.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
-import { appendEvent, requireRoot, type StoredActor, serviceId } from '@/core/record-checks.ts';
+import { requireRoot, type StoredActor, serviceId } from '@/core/record-checks.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { EvidenceEntry, Group, Task, TaskState, VerificationMode } from '@/domain/model.ts';
 import { isClosedState } from '@/domain/model.ts';

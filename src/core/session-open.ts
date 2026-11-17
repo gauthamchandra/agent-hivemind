@@ -1,7 +1,8 @@
 import type { ServiceDeps } from '@/core/deps.ts';
 import { createGroup } from '@/core/group-records.ts';
+import { requireBoundedText } from '@/core/record-checks.ts';
 import { reportTransition } from '@/core/report-records.ts';
-import { requireText, storedOutcome } from '@/core/session-rows.ts';
+import { storedOutcome } from '@/core/session-outcome.ts';
 import { recoverPendingStart, startSession } from '@/core/session-start.ts';
 import type { StartOutcome } from '@/core/session-types.ts';
 import { type ErrorCode, errorCodes, HivemindError } from '@/domain/errors.ts';
@@ -35,7 +36,7 @@ export async function openGroup(
   session: SessionRecord;
   errorClass?: PlatformErrorClass;
 }> {
-  requireText(input.instructions, 'instructions', 16 * 1024);
+  requireBoundedText(input.instructions, 'instructions', 16 * 1024);
 
   const handle = platforms.require(input.connectionId);
 

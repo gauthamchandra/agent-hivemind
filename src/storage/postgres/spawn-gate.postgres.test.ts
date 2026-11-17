@@ -13,10 +13,10 @@ import { HivemindError } from '@/domain/errors.ts';
 import { createIds, defaultWorkspaceId } from '@/domain/ids.ts';
 import { selfHostedGroupCaps } from '@/domain/model.ts';
 import { createSimulatedPlatform } from '@/platform/simulated/adapter.ts';
-import { manualClock } from '@/ports/clock.ts';
 import type { Platforms } from '@/ports/platform.ts';
 import { systemRandom } from '@/ports/random.ts';
 import { openPostgresStore } from '@/storage/postgres/postgres.ts';
+import { manualClock } from '@/testing/clock.ts';
 import { testResponseKey } from '@/testing/deps.ts';
 
 const databaseUrl = process.env.HIVEMIND_POSTGRES_URL;
@@ -100,7 +100,7 @@ test.skipIf(databaseUrl === undefined)(
     const left = await createChildTask(deps, {
       workspaceId: defaultWorkspaceId,
       groupId: opened.group.id,
-      actor: { role: 'planner', sessionId: opened.session.id, live: true },
+      actor: { sessionId: opened.session.id, live: true },
       title: 'Left task',
       description: 'A child task with enough description to be stored.',
       verificationMode: null,
@@ -109,7 +109,7 @@ test.skipIf(databaseUrl === undefined)(
     const right = await createChildTask(deps, {
       workspaceId: defaultWorkspaceId,
       groupId: opened.group.id,
-      actor: { role: 'planner', sessionId: opened.session.id, live: true },
+      actor: { sessionId: opened.session.id, live: true },
       title: 'Right task',
       description: 'A child task with enough description to be stored.',
       verificationMode: null,

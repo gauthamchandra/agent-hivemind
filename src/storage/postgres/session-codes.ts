@@ -1,7 +1,13 @@
 import type { IdempotencyRecord, UnitOfWork } from '@/ports/storage.ts';
 import { parseCode, readBoolean } from '@/storage/postgres/session-read.ts';
 import type { Sql } from '@/storage/postgres/store-query.ts';
-import { one, readJson, readNullableString, readString } from '@/storage/postgres/store-query.ts';
+import {
+  one,
+  oneParsed,
+  readJson,
+  readNullableString,
+  readString,
+} from '@/storage/postgres/store-query.ts';
 
 export function codeWork(
   sql: Sql
@@ -37,7 +43,7 @@ export function codeWork(
     async enrollmentByHash(hash) {
       const row = await one(sql, 'SELECT * FROM enrollment_codes WHERE code_hash = $1', [hash]);
 
-      return row === null ? null : parseCode(row);
+      return oneParsed(row, parseCode);
     },
     async openEnrollmentCode(sessionId) {
       const row = await one(
@@ -49,7 +55,7 @@ export function codeWork(
         [sessionId]
       );
 
-      return row === null ? null : parseCode(row);
+      return oneParsed(row, parseCode);
     },
     async saveEnrollmentCode(code) {
       await sql.query(

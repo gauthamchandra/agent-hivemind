@@ -1,7 +1,7 @@
 import type { UnitOfWork } from '@/ports/storage.ts';
 import { parseTask, readTasks, taskParams, taskWrite } from '@/storage/postgres/parse-task.ts';
 import type { Sql } from '@/storage/postgres/store-query.ts';
-import { many, one, readNumber, run } from '@/storage/postgres/store-query.ts';
+import { json, many, one, oneParsed, readNumber, run } from '@/storage/postgres/store-query.ts';
 
 export function taskWork(
   sql: Sql
@@ -14,6 +14,7 @@ export function taskWork(
   | 'childCounts'
   | 'openChildren'
   | 'nextSequence'
+  | 'insertEvent'
 > {
   return {
     async insertTask(task) {
@@ -41,7 +42,7 @@ export function taskWork(
         [workspaceId, id]
       );
 
-      return row === null ? null : parseTask(row);
+      return oneParsed(row, parseTask);
     },
     tasks(workspaceId, groupId) {
       return readTasks(sql, workspaceId, groupId);
@@ -76,6 +77,33 @@ export function taskWork(
       );
 
       return rows.map(parseTask);
+    },
+    async insertEvent(event) {
+      await run(
+        sql,
+        `INSERT INTO task_events (
+           id, workspace_id, task_id, group_id, sequence, kind, actor_kind, actor_id,
+           from_state, to_state, evidence, note, data, at
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14::timestamptz
+         )`,
+        [
+          event.id,
+          event.workspace_id,
+          event.task_id,
+          event.group_id,
+          event.sequence,
+          event.kind,
+          event.actor_kind,
+          event.actor_id,
+          event.from_state,
+          event.to_state,
+          json(event.evidence),
+          event.note,
+          json(event.data),
+          event.at,
+        ]
+      );
     },
     async nextSequence(groupId) {
       const row = await one(

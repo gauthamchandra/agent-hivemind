@@ -1,7 +1,7 @@
 import type { UnitOfWork } from '@/ports/storage.ts';
 import { parseOperatorKey, parsePerson, parseWorkspace } from '@/storage/postgres/parse-account.ts';
 import type { Sql } from '@/storage/postgres/store-query.ts';
-import { json, many, one, readCount, run } from '@/storage/postgres/store-query.ts';
+import { count, json, many, one, oneParsed, run } from '@/storage/postgres/store-query.ts';
 
 export function accountWork(
   sql: Sql
@@ -20,10 +20,10 @@ export function accountWork(
 > {
   return {
     async countWorkspaces() {
-      return readCount(sql, 'SELECT count(*)::int AS count FROM workspaces');
+      return count(sql, 'SELECT count(*)::int AS count FROM workspaces');
     },
     async countPeople() {
-      return readCount(sql, 'SELECT count(*)::int AS count FROM people');
+      return count(sql, 'SELECT count(*)::int AS count FROM people');
     },
     async hasUsableOperatorKey(now) {
       const row = await one(
@@ -55,7 +55,7 @@ export function accountWork(
     async workspace(id) {
       const row = await one(sql, 'SELECT * FROM workspaces WHERE id = $1', [id]);
 
-      return row === null ? null : parseWorkspace(row);
+      return oneParsed(row, parseWorkspace);
     },
     async insertPerson(person) {
       await run(
@@ -89,7 +89,7 @@ export function accountWork(
         id,
       ]);
 
-      return row === null ? null : parsePerson(row);
+      return oneParsed(row, parsePerson);
     },
     async insertOperatorKey(record) {
       await run(
@@ -113,7 +113,7 @@ export function accountWork(
     async operatorKeyByHash(hash) {
       const row = await one(sql, 'SELECT * FROM operator_keys WHERE key_hash = $1', [hash]);
 
-      return row === null ? null : parseOperatorKey(row);
+      return oneParsed(row, parseOperatorKey);
     },
   };
 }

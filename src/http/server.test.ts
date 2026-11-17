@@ -22,6 +22,30 @@ async function creatorKey(ctx: HttpService): Promise<string> {
   return bootstrapCreatorKey(ctx.server, ctx.bootstrap);
 }
 
+test('a bootstrap key cannot mint another bootstrap key', async () => {
+  const ctx = await bootHttpService();
+
+  await sendJson(
+    ctx.server,
+    'POST',
+    '/v1/bootstrap/administrator',
+    { display_name: 'Ada' },
+    bearer(ctx.bootstrap)
+  );
+  const refused = await sendJson(
+    ctx.server,
+    'POST',
+    '/v1/bootstrap/keys',
+    { name: 'again', role: 'bootstrap' },
+    bearer(ctx.bootstrap)
+  );
+  const error = refused.body.error as { message?: string };
+
+  expectStatus(refused, 422);
+  expect(errorCode(refused.body)).toBe('validation_failed');
+  expect(error.message).toBe('The bootstrap key cannot create another bootstrap key.');
+});
+
 test('a numeric key expiry is refused', async () => {
   const ctx = await bootHttpService();
   const created = await sendJson(

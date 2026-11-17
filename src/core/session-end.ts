@@ -1,13 +1,14 @@
+import { appendEvent } from '@/core/append-event.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
-import { appendEvent } from '@/core/record-checks.ts';
+import { occupancyFor } from '@/core/session-caps.ts';
 import { readFinalUsage, reclaimCompensatedStart } from '@/core/session-compensate.ts';
 import { attachPlatformRef, recordEndIntent } from '@/core/session-intent.ts';
-import { lockOwned, occupancyFor } from '@/core/session-rows.ts';
+import { lockOwned } from '@/core/session-lock.ts';
+import { endOnPlatform } from '@/core/session-platform.ts';
 import { type CrashPoint, StoppedProcess } from '@/core/session-types.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { PersonId, SessionId, WorkspaceId } from '@/domain/ids.ts';
 import type { SessionRecord } from '@/domain/model.ts';
-import { PlatformError } from '@/domain/platform.ts';
 import { formatTime } from '@/domain/time.ts';
 import type { Platforms } from '@/ports/platform.ts';
 import type { UnitOfWork } from '@/ports/storage.ts';
@@ -76,24 +77,7 @@ export async function settleEndedPlatform(
 
   if (current.platform_session_ref === null || !current.final_usage_pending) return current;
 
-  const group = await deps.store.group(current.workspace_id, current.group_id);
-
-  if (group === null) {
-    throw new HivemindError('not_found', 'No group with that identifier is in this workspace.');
-  }
-
-  const handle = platforms.require(group.connection_id);
-
-  try {
-    await handle.adapter.end(handle.connection, current.platform_session_ref);
-  } catch (error) {
-    if (error instanceof PlatformError) {
-      throw new HivemindError('unavailable', 'The platform did not stop the session.');
-    }
-
-    throw error;
-  }
-
+  await endOnPlatform(deps, platforms, current, current.platform_session_ref);
   await readFinalUsage(deps, platforms, current);
 
   return (await deps.store.session(current.workspace_id, current.id)) ?? current;
@@ -111,23 +95,7 @@ export async function finishPlatformEnd(
       : session;
 
   if (resolved.platform_session_ref !== null) {
-    const group = await deps.store.group(resolved.workspace_id, resolved.group_id);
-
-    if (group === null) {
-      throw new HivemindError('not_found', 'No group with that identifier is in this workspace.');
-    }
-
-    const handle = platforms.require(group.connection_id);
-
-    try {
-      await handle.adapter.end(handle.connection, resolved.platform_session_ref);
-    } catch (error) {
-      if (error instanceof PlatformError) {
-        throw new HivemindError('unavailable', 'The platform did not stop the session.');
-      }
-
-      throw error;
-    }
+    await endOnPlatform(deps, platforms, resolved, resolved.platform_session_ref);
   }
 
   if (crashAt === 'after_platform_end') throw new StoppedProcess('after_platform_end');
@@ -136,23 +104,7 @@ export async function finishPlatformEnd(
   const attached = finished.platform_session_ref;
 
   if (attached !== null && attached !== resolved.platform_session_ref) {
-    const group = await deps.store.group(finished.workspace_id, finished.group_id);
-
-    if (group === null) {
-      throw new HivemindError('not_found', 'No group with that identifier is in this workspace.');
-    }
-
-    const handle = platforms.require(group.connection_id);
-
-    try {
-      await handle.adapter.end(handle.connection, attached);
-    } catch (error) {
-      if (error instanceof PlatformError) {
-        throw new HivemindError('unavailable', 'The platform did not stop the session.');
-      }
-
-      throw error;
-    }
+    await endOnPlatform(deps, platforms, finished, attached);
   }
 
   if (finished.platform_session_ref !== null && finished.final_usage_pending) {

@@ -7,13 +7,14 @@ import {
   requireWorkspaceId,
 } from '@/domain/ids.ts';
 import type { SessionRecord } from '@/domain/model.ts';
-import { isNeutralStatus, isSessionLife, isSessionRole } from '@/domain/model.ts';
+import { isActorKind, isNeutralStatus, isSessionLife, isSessionRole } from '@/domain/model.ts';
 import { readTime } from '@/domain/time.ts';
 import type { EnrollmentCodeRecord, Occupancy } from '@/ports/storage.ts';
 import type { Row, Sql } from '@/storage/postgres/store-query.ts';
 import {
   many,
   one,
+  oneParsed,
   readNullableString,
   readNullableTime,
   readNumber,
@@ -45,7 +46,7 @@ export async function readSession(
     id,
   ]);
 
-  return row === null ? null : parseSession(row);
+  return oneParsed(row, parseSession);
 }
 
 export function readOccupancy(sql: Sql, workspaceId: string, groupId: string): Promise<Occupancy> {
@@ -119,14 +120,7 @@ export function parseSession(row: Row): SessionRecord {
 
   if (!isSessionRole(role) || !isSessionLife(life)) throw unreadable();
   if (enrolledBy !== null && enrolledBy !== 'secret' && enrolledBy !== 'code') throw unreadable();
-  if (
-    endActor !== null &&
-    endActor !== 'session' &&
-    endActor !== 'person' &&
-    endActor !== 'service'
-  ) {
-    throw unreadable();
-  }
+  if (endActor !== null && !isActorKind(endActor)) throw unreadable();
   if (status !== null && !isNeutralStatus(status)) throw unreadable();
   if (attributed !== null && attributed !== 'owner' && attributed !== 'service') throw unreadable();
   if (delivered !== null && delivered !== 'yes' && delivered !== 'no' && delivered !== 'unknown') {
@@ -178,12 +172,6 @@ export function parseCode(row: Row): EnrollmentCodeRecord {
     voided_at: readNullableTime(row.voided_at),
     created_at: readTime(row.created_at),
   };
-}
-
-export async function count(sql: Sql, text: string, params: unknown[]): Promise<number> {
-  const row = await one(sql, text, params);
-
-  return readNumber(row ?? {}, 'count');
 }
 
 export function readBoolean(row: Row, key: string): boolean {

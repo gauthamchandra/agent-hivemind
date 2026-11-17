@@ -180,7 +180,7 @@ async function addChild(ctx: Walk, groupId: GroupId, mode: VerificationMode | nu
   return createChildTask(ctx.deps, {
     workspaceId: ctx.workspaceId,
     groupId,
-    actor: { role: 'planner', sessionId: ctx.sessions.planner, live: true },
+    actor: { sessionId: ctx.sessions.planner, live: true },
     title,
     description: 'Do the work described by the title.',
     verificationMode: mode,
@@ -853,7 +853,7 @@ test('the root closes when it enters implementing after every child is done', as
     await createChildTask(deps, {
       workspaceId,
       groupId: created.group.id,
-      actor: { role: 'planner', sessionId: planner, live: true },
+      actor: { sessionId: planner, live: true },
       title: 'Finish first',
       description: 'Complete this child while the root is still analyzing.',
       verificationMode: null,

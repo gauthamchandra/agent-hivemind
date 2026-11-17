@@ -1,7 +1,8 @@
+import { appendEvent } from '@/core/append-event.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
 import {
-  appendEvent,
   type IdempotencyInput,
+  lockedCaller,
   rememberIdempotency,
   replayedTask,
   requireBoundedText,
@@ -9,19 +10,18 @@ import {
   requireRoot,
   requireTitle,
 } from '@/core/record-checks.ts';
-import { lockedCaller } from '@/core/report-records.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { GroupId, SessionId, TaskId, WorkspaceId } from '@/domain/ids.ts';
 import type { Task, VerificationMode } from '@/domain/model.ts';
 import { formatTime } from '@/domain/time.ts';
-import { evaluatePolicy } from '@/policy/policy.ts';
+import { requireAllowed } from '@/policy/policy.ts';
 
 export async function createChildTask(
   deps: ServiceDeps,
   input: {
     workspaceId: WorkspaceId;
     groupId: GroupId;
-    actor: { role: 'planner'; sessionId: SessionId; live: boolean };
+    actor: { sessionId: SessionId; live?: boolean };
     title: string;
     description: string;
     verificationMode: VerificationMode | null;
@@ -42,10 +42,14 @@ export async function createChildTask(
       throw new HivemindError('not_found', 'No task with that identifier is in this workspace.');
     }
 
-    const decision = evaluatePolicy({
+    if (session === null && input.actor.live === undefined) {
+      throw new HivemindError('unauthenticated', 'The session token is not valid.');
+    }
+
+    requireAllowed({
       role: session?.role ?? 'planner',
       action: 'create_child_task',
-      released: session === null ? !input.actor.live : session.life === 'released',
+      released: session === null ? input.actor.live !== true : session.life === 'released',
       taskKind: 'root',
       taskState: root.state,
       relation: 'own',
@@ -54,13 +58,6 @@ export async function createChildTask(
       targetStartedByCaller: false,
       targetTaskClosed: false,
     });
-
-    if (!decision.allowed) {
-      throw new HivemindError('policy_denied', decision.message, {
-        role: decision.role,
-        action: decision.action,
-      });
-    }
 
     const title = requireTitle(input.title);
     const description = requireBoundedText(input.description, 'description', 32 * 1024);

@@ -1,6 +1,6 @@
+import { appendEvent } from '@/core/append-event.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
 import {
-  appendEvent,
   type IdempotencyInput,
   rememberIdempotency,
   replayedGroup,

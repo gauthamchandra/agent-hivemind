@@ -1,13 +1,15 @@
+import { appendEvent } from '@/core/append-event.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
 import { composePrompt } from '@/core/prompt.ts';
-import { appendEvent } from '@/core/record-checks.ts';
+import { requireBoundedText } from '@/core/record-checks.ts';
+import { occupancyFor } from '@/core/session-caps.ts';
 import {
   lockStart,
   refuseStartCaps,
   requireReplaced,
   requireStarter,
 } from '@/core/session-gate.ts';
-import { callerOf, occupancyFor, randomText, requireText, roleLabel } from '@/core/session-rows.ts';
+import { callerOf, randomText, roleLabel } from '@/core/session-lock.ts';
 import {
   enrollmentTtlMs,
   type Reserved,
@@ -30,7 +32,7 @@ export async function reserveStart(
   tx: UnitOfWork,
   input: StartInput
 ): Promise<Reserved> {
-  const instructions = requireText(input.instructions, 'instructions', 16 * 1024);
+  const instructions = requireBoundedText(input.instructions, 'instructions', 16 * 1024);
   const caller = callerOf(input);
   const locked = await lockStart(tx, input, caller);
 

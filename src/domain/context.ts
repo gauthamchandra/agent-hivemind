@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import { HivemindError } from '@/domain/errors.ts';
+import { sha256Hex } from '@/domain/secret.ts';
 
 const noteLimit = 16 * 1024;
 
@@ -15,7 +15,7 @@ export function renderContextNotes(notes: readonly NoteDraft[]): string {
 }
 
 export function fingerprintText(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
+  return sha256Hex(value);
 }
 
 export function requireContextNotes(notes: readonly NoteDraft[]): {
