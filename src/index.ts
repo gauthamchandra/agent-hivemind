@@ -2,12 +2,15 @@ import { PGlite } from '@electric-sql/pglite';
 import { drainOutbox } from '@/core/delivery.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
 import { openInstallation } from '@/core/installation.ts';
+import { runDueJobs } from '@/core/supervision.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import { type ConnectionId, createIds, defaultWorkspaceId } from '@/domain/ids.ts';
 import { formatTime } from '@/domain/time.ts';
 import { startHttp } from '@/http/server.ts';
+import { createWebhookNotifier } from '@/notify/webhook.ts';
 import { createSimulatedPlatform } from '@/platform/simulated/adapter.ts';
 import { systemClock } from '@/ports/clock.ts';
+import type { Notifier } from '@/ports/notifier.ts';
 import type { Platforms } from '@/ports/platform.ts';
 import { systemRandom } from '@/ports/random.ts';
 import { openPgliteStore } from '@/storage/postgres/store.ts';
@@ -56,19 +59,34 @@ export async function startHivemind(options?: {
     connectionId,
     ...(options?.port === undefined ? {} : { port: options.port }),
   });
+  const notifier = webhookFromEnv();
   let draining = false;
+  let supervising = false;
   let activeDrain: Promise<void> = Promise.resolve();
+  let activeSupervision: Promise<void> = Promise.resolve();
   const timer = setInterval(() => {
-    if (draining) return;
+    if (!draining) {
+      draining = true;
+      activeDrain = drainOutbox(deps, platforms, { workerId: 'hivemind-svc' })
+        .catch(() => {
+          console.error('Delivery will retry on the next tick.');
+        })
+        .finally(() => {
+          draining = false;
+        });
+    }
 
-    draining = true;
-    activeDrain = drainOutbox(deps, platforms, { workerId: 'hivemind-svc' })
-      .catch(() => {
-        console.error('Delivery will retry on the next tick.');
-      })
-      .finally(() => {
-        draining = false;
-      });
+    if (!supervising) {
+      supervising = true;
+      activeSupervision = runDueJobs(deps, platforms, notifier, { workerId: 'hivemind-svc' })
+        .then(() => undefined)
+        .catch(() => {
+          console.error('Supervision will retry on the next tick.');
+        })
+        .finally(() => {
+          supervising = false;
+        });
+    }
   }, 1000);
 
   return {
@@ -78,10 +96,25 @@ export async function startHivemind(options?: {
     async stop() {
       clearInterval(timer);
       await activeDrain;
+      await activeSupervision;
       server.stop();
       await database.close();
     },
   };
+}
+
+function webhookFromEnv(): Notifier | null {
+  const url = process.env.HIVEMIND_WEBHOOK_URL;
+
+  if (url === undefined || url.length === 0) return null;
+
+  const secret = process.env.HIVEMIND_WEBHOOK_SECRET;
+
+  if (secret === undefined || secret.length === 0) {
+    throw new HivemindError('unavailable', 'HIVEMIND_WEBHOOK_SECRET is not set.');
+  }
+
+  return createWebhookNotifier({ url, secret });
 }
 
 function configuredResponseKey(given: string | undefined): string {

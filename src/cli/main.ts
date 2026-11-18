@@ -67,7 +67,7 @@ export async function runHivemind(io: Io): Promise<number> {
     return 11;
   }
   io.stderr(
-    'Run hivemind enroll, whoami, task, member, release, resume, send, ask, answer, relay, or inbox.'
+    'Run hivemind enroll, whoami, task, member, release, resume, send, ask, answer, relay, inbox, or escalate.'
   );
 
   return 12;
