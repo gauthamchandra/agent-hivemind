@@ -35,6 +35,9 @@ Opt-in workflow skills, also under `.agents/skills/`:
   when addressing review comments, findings, or a repeated review iteration.
 - **[ponytail](.agents/skills/ponytail/SKILL.md)** — when a coding task should stay
   the smallest change that still finishes it.
+- **[domain-driven-development](.agents/skills/domain-driven-development/SKILL.md)** — when a
+  change adds or reshapes a service, port, table, route, or CLI command, or a unit starts
+  doing two jobs. It sits below the YAGNI rules in this file.
 
 ## Writing
 
@@ -96,6 +99,10 @@ For non-trivial work, do not start implementation until the caller has seen a sh
 and answered any questions it raised. The plan should state what will change, what will
 not (known gaps and YAGNI cuts), which tests come first, and open design questions.
 
+For a change that adds a service, port, table, route, or command, the plan also names the
+domain term, the layer each new unit lives in, and the one reason each unit changes. See
+[domain-driven-development](.agents/skills/domain-driven-development/SKILL.md).
+
 A change that meets the ADR bar in [CONTRIBUTING.md](CONTRIBUTING.md#architecture-decisions)
 is non-trivial by definition. The plan names the ADR: one it will add, or an accepted one that
 already covers the change. Write a new ADR before the code that depends on it, in the same pull
@@ -107,7 +114,8 @@ design questions, do not re-ask — proceed.
 
 ## Migrations
 
-Migrations are forward only and zero-downtime. Do not add a down migration, and do not call rollback in production. Correct a released change with a new forward migration.
+Migrations are forward only and zero-downtime. Do not add a down migration, and do not call rollback in production. Correct a released change with a new forward migration. Add a constraint `NOT VALID` in one
+migration and validate it in a later one, never in the same file.
 
 The decision is recorded in [docs/adr/0001-forward-only-sql-migrations.md](docs/adr/0001-forward-only-sql-migrations.md).
 
@@ -164,6 +172,17 @@ The rules are in [CONTRIBUTING.md](CONTRIBUTING.md). The mechanics:
 - Do not use `test.concurrent`. PGlite is WASM on one thread, so it gives no speedup
   (measured), and the shared teardown assumes one test runs at a time.
 
+### Concurrency
+
+PGlite runs one transaction at a time, so `bun test` cannot show a race or a deadlock.
+
+- Take locks in the order in [docs/architecture.md](docs/architecture.md#places-and-locks). The
+  store throws when a transaction breaks it. A new store method that takes a row lock must be
+  wrapped in `inLockOrder` (`src/storage/postgres/lock-order.ts`).
+- A new `FOR UPDATE` path, or code that allocates the next number with `MAX(…) + 1`, needs a test
+  with two connections in a `*.postgres.test.ts` file. CI runs those against a PostgreSQL
+  server. A PGlite test that hides a row to imitate a race does not count.
+
 ### Test-driven development
 
 For non-trivial, non-infrastructure changes, write the tests first, confirm they fail for
@@ -216,7 +235,7 @@ Relative imports within a module are fine. Prefer `@/` when crossing package roo
 
 An ADR uses Michael Nygard's sections: title, status, context, decision, consequences. Include one concrete example in the decision. Do not add other headings.
 
-Name a later ADR only when it supersedes this one. That link sits on the old ADR. An ADR that only builds on an earlier one does not point forward.
+Name a later ADR only when it supersedes this one. That link sits on the old ADR. An ADR that only builds on an earlier one does not point forward. `src/docs/adr-links.test.ts` enforces this.
 
 ## Guidelines
 
@@ -232,3 +251,7 @@ Name a later ADR only when it supersedes this one. That link sits on the old ADR
 - Type-only imports: `import type { Foo } from './foo'`
 - Prefer static imports over dynamic `await import()` unless there is a genuine need
 - For numeric presence checks, use `value != null` (not truthiness — `0` is valid)
+- Resolve "flag over parsed value over default" in the CLI parse layer, once. The command that consumes the value never re-implements the precedence
+- A CLI command calls a named client method (`sendMessage`, `listInbox`). Route paths live only in the client
+- Do not coin a status word unless the doc defines it and the code uses it. Two words for one thing become one
+- Name a timestamp column `<field>_at` or `<field>_until`, and give every new table a `COMMENT ON TABLE`. `src/storage/postgres/schema-conventions.test.ts` enforces both

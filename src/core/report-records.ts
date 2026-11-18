@@ -59,6 +59,12 @@ export async function reportTransition(
       });
     }
 
+    // Failing the root also fails its open children. Lock them here so they come before the
+    // caller's session, which resolveActor locks next.
+    if (task.parent_id === null && input.to === 'failed') {
+      await tx.openChildren(input.workspaceId, input.groupId, task.id);
+    }
+
     const actor = await resolveActor(tx, input.workspaceId, group, input.actor);
 
     if (actor.caller) {

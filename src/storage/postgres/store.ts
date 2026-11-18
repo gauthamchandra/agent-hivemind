@@ -3,6 +3,7 @@ import { requireConnectionId } from '@/domain/ids.ts';
 import type { Store, UnitOfWork } from '@/ports/storage.ts';
 import { accountWork } from '@/storage/postgres/account-work.ts';
 import { groupWork } from '@/storage/postgres/group-work.ts';
+import { inLockOrder } from '@/storage/postgres/lock-order.ts';
 import { messageWork } from '@/storage/postgres/message-records.ts';
 import { applyMigrations, executePglite } from '@/storage/postgres/migrate.ts';
 import { readEvents } from '@/storage/postgres/parse-event.ts';
@@ -112,7 +113,7 @@ function queries(db: PGlite | Transaction): Sql {
 }
 
 function unitOfWork(sql: Sql): UnitOfWork {
-  return {
+  return inLockOrder({
     ...counterWork(sql),
     ...rowWork(sql),
     ...codeWork(sql),
@@ -120,5 +121,5 @@ function unitOfWork(sql: Sql): UnitOfWork {
     ...groupWork(sql),
     ...taskWork(sql),
     ...messageWork(sql),
-  };
+  });
 }

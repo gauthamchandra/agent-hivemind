@@ -23,6 +23,16 @@ they both describe.
   missing value cannot let a later assertion pass for the wrong reason.
 - **Tests stand alone.** Tests may run in random order, so a test must not rely on another
   test having run first.
+- **Locks go in one order.** A transaction takes locks in the order in
+  [`docs/architecture.md`](docs/architecture.md#places-and-locks). The store throws when one
+  breaks it, so a new store method that takes a row lock must be wrapped in `inLockOrder`. A new
+  `FOR UPDATE` path, or code that allocates the next number with `MAX(…) + 1`,
+  needs a test with two connections in a `*.postgres.test.ts` file, because the in-process
+  database runs one transaction at a time and cannot show a race.
+- **Schema conventions.** A timestamp column is named `<field>_at` or `<field>_until`, and every
+  table has a `COMMENT ON TABLE` that says what it holds. A constraint is added `NOT VALID` in
+  one migration and validated in a later one. `schema-conventions.test.ts` fails on a new
+  violation. Its two lists of older exceptions only shrink.
 - **Docs travel with the change.** A change to a transition row, a policy rule, or a session's
   life updates [`docs/state-machines.md`](docs/state-machines.md) in the same pull request. A
   change to a layer boundary or a port updates [`docs/architecture.md`](docs/architecture.md).
@@ -64,6 +74,8 @@ Name the file with the next number, `NNNN-short-name.md`. Follow
 [ADR 0001](docs/adr/0001-forward-only-sql-migrations.md) and the document shape in
 [AGENTS.md](AGENTS.md#adrs). An ADR can be accepted before its code exists. Say so in its status. Other docs, such
 as `docs/architecture.md`, link to the ADR and do not repeat its reasoning.
+
+`src/docs/adr-links.test.ts` fails when an ADR names a later one that does not supersede it.
 
 ---
 
