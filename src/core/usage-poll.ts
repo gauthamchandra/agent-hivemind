@@ -1,3 +1,4 @@
+import { syncAlerts } from '@/core/alert-sync.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
 import { type JobRunResult, type RunOptions, takeJob } from '@/core/job-run.ts';
 import { StoppedProcess } from '@/core/session-types.ts';
@@ -25,6 +26,7 @@ export async function runUsagePoll(
   const snapshot = await deps.store.transact(tx => tx.loadJobSnapshot());
   const ordered = batch(snapshot);
   const unreliable = new Set<string>();
+  const grew = new Set<string>();
 
   await finishPollsOfGoneSessions(deps, snapshot, lockId);
 
@@ -32,7 +34,9 @@ export async function runUsagePoll(
     if (deps.clock.now().getTime() - started > usagePollDeadlineMs) break;
 
     try {
-      await pollSession(deps, platforms, snapshot, session, lockId, options, unreliable);
+      if (await pollSession(deps, platforms, snapshot, session, lockId, options, unreliable)) {
+        grew.add(session.task_id);
+      }
     } catch (error) {
       if (error instanceof StoppedProcess) throw error;
       if (error instanceof HivemindError && error.code === 'conflict') throw error;
@@ -40,6 +44,15 @@ export async function runUsagePoll(
       console.error(`Usage poll skipped session ${session.id}.`, error);
     }
   }
+
+  // A read can take minutes, so the alerts are judged from what the run committed, not from the
+  // snapshot it started with.
+  const committed = await deps.store.transact(tx => tx.loadJobSnapshot());
+
+  await syncAlerts(deps, platforms, committed, lockId, {
+    unreliableConnections: unreliable,
+    tasksWithUsageGrowth: grew,
+  });
 
   return { ran: true, lockId };
 }

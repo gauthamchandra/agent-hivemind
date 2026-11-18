@@ -1,4 +1,4 @@
-import type { NeutralStatus } from '@/domain/model.ts';
+import type { NeutralStatus, SessionRole } from '@/domain/model.ts';
 import { isNeutralStatus } from '@/domain/model.ts';
 import {
   type Capability,
@@ -45,6 +45,7 @@ export type SimWorld = {
   reportedUsage: number;
   usageUnit: string;
   usageUnitDisplay: string;
+  roleCeilings: Partial<Record<SessionRole, number>>;
   credential: string;
 };
 
@@ -240,7 +241,7 @@ export function descriptionFor(world: SimWorld): AdapterDescription {
     usageUnitDisplay: world.usageUnitDisplay,
     modelTiers: [],
     platformSettingKeys: [],
-    roleCeilings: { planner: 20, challenger: 10, implementer: 30, reviewer: 10, verifier: 10 },
+    roleCeilings: { ...world.roleCeilings },
     repositoriesRequired: false,
   };
 }
