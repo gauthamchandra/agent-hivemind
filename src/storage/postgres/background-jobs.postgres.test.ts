@@ -8,13 +8,19 @@ import { writeReaperJobState } from '@/core/reaper-actions.ts';
 import { endSession } from '@/core/session-end.ts';
 import { openGroup } from '@/core/session-open.ts';
 import { StoppedProcess } from '@/core/session-types.ts';
-import { emptySessionJobState, reaperIntervalMs } from '@/domain/background-jobs.ts';
+import { runUsagePoll } from '@/core/usage-poll.ts';
+import {
+  emptySessionJobState,
+  reaperIntervalMs,
+  usagePollIntervalMs,
+} from '@/domain/background-jobs.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import { createIds, defaultWorkspaceId } from '@/domain/ids.ts';
 import { createSimulatedPlatform } from '@/platform/simulated/adapter.ts';
 import type { Platforms } from '@/ports/platform.ts';
 import { systemRandom } from '@/ports/random.ts';
 import { openPostgresStore } from '@/storage/postgres/postgres.ts';
+import { requirePresent } from '@/testing/assertions.ts';
 import { manualClock } from '@/testing/clock.ts';
 import { testResponseKey } from '@/testing/deps.ts';
 import { checkoutGroup } from '@/testing/fixtures.ts';
@@ -22,6 +28,65 @@ import { runAfterTest } from '@/testing/teardown.ts';
 import { waitUntil } from '@/testing/wait.ts';
 
 const databaseUrl = process.env.HIVEMIND_POSTGRES_URL;
+
+test.skipIf(databaseUrl === undefined)(
+  'two workers race for the usage poll job lock and one runs the job',
+  async () => {
+    const ctx = await boot(databaseUrl ?? '');
+    let release = () => {};
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+
+    runAfterTest(() => release());
+
+    let entered = false;
+    const platforms = delaying(ctx.platforms, ctx.connectionId, async () => {
+      entered = true;
+      await gate;
+    });
+    const first = runUsagePoll(ctx.depsA, platforms, { workerId: ctx.workerA });
+
+    await waitUntil(() => (entered ? true : null), 'the first worker to read usage');
+
+    const second = await runUsagePoll(ctx.depsB, platforms, { workerId: ctx.workerB });
+
+    release();
+
+    const winner = await first;
+
+    expect(winner.ran).toBe(true);
+    expect(second.ran).toBe(false);
+    expect(ctx.workerA).not.toBe(ctx.workerB);
+    expect(await ctx.lockedBy('usage_poll')).toBe(ctx.workerA);
+    expect(ctx.simulated.calls().filter(call => call === 'readUsage')).toHaveLength(1);
+  }
+);
+
+test.skipIf(databaseUrl === undefined)(
+  'the next worker writes status and usage after the first worker stops',
+  async () => {
+    const ctx = await boot(databaseUrl ?? '');
+    const ref = requirePresent(ctx.planner.platform_session_ref, 'planner ref');
+
+    ctx.simulated.setSessionUsage(ref, 2);
+
+    const held = await runUsagePoll(ctx.depsA, ctx.platforms, { workerId: ctx.workerA });
+
+    expect(held.ran).toBe(true);
+
+    ctx.clock.advance(usagePollIntervalMs);
+    ctx.simulated.setSessionStatus(ref, 'idle');
+    ctx.simulated.setSessionUsage(ref, 7);
+
+    const next = await runUsagePoll(ctx.depsB, ctx.platforms, { workerId: ctx.workerB });
+    const stored = await ctx.depsA.store.session(defaultWorkspaceId, ctx.planner.id);
+
+    expect(next.ran).toBe(true);
+    expect(stored?.last_status).toBe('idle');
+    expect(stored?.usage).toBe('7');
+  }
+);
 
 test.skipIf(databaseUrl === undefined)(
   'two workers race for the reaper job lock and one runs the job',
@@ -193,6 +258,9 @@ async function boot(url: string) {
   const context = {
     clock,
     platforms,
+    simulated,
+    connectionId,
+    planner: opened.session,
     groupId: opened.group.id,
     plannerId: opened.session.id,
     workerA,
@@ -234,4 +302,30 @@ async function boot(url: string) {
 
 function openPlannedActions(deps: ServiceDeps) {
   return deps.store.transact(tx => tx.openPlannedActions('reaper'));
+}
+
+function delaying(
+  platforms: Platforms,
+  connectionId: string,
+  wait: () => Promise<void>
+): Platforms {
+  return {
+    require(id) {
+      const handle = platforms.require(id);
+
+      if (id !== connectionId) return handle;
+
+      return {
+        connection: handle.connection,
+        adapter: {
+          ...handle.adapter,
+          readUsage: async (connection, ref) => {
+            await wait();
+
+            return handle.adapter.readUsage(connection, ref);
+          },
+        },
+      };
+    },
+  };
 }

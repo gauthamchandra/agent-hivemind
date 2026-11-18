@@ -21,6 +21,8 @@ export function sessionJobStateParams(jobState: SessionJobState): unknown[] {
     jobState.lastFind,
     jobState.suspendedAt,
     jobState.suspendedProgressAt,
+    jobState.lastReadingAt,
+    jobState.lastAttemptAt,
     jobState.orphanEnded,
   ];
 }
@@ -47,6 +49,8 @@ export function parseSessionJobState(row: Row): SessionJobState {
     lastFind,
     suspendedAt: readNullableTime(row.suspended_at),
     suspendedProgressAt: readNullableTime(row.suspended_progress_at),
+    lastReadingAt: readNullableTime(row.last_reading_at),
+    lastAttemptAt: readNullableTime(row.last_attempt_at),
     orphanEnded: readBoolean(row, 'orphan_ended'),
   };
 }

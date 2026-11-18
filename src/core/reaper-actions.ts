@@ -10,8 +10,8 @@ import { findOnPlatform } from '@/core/session-platform.ts';
 import { recoverStart } from '@/core/session-start.ts';
 import type { JobSnapshot, SessionJobState } from '@/domain/background-jobs.ts';
 import {
-  emptySessionJobState,
   searchWindowMs,
+  sessionJobStateFor,
   startingResolveMs,
   suspendIdleMs,
 } from '@/domain/background-jobs.ts';
@@ -265,21 +265,10 @@ export async function writeReaperJobState(
   const wrote = await deps.store.transact(async tx => {
     if (!(await tx.holdJobLock('reaper', lockId, formatTime(deps.clock.now())))) return false;
 
-    await tx.saveSessionJobState(jobState);
+    await tx.saveSessionJobState(jobState, 'reaper');
 
     return true;
   });
 
   if (!wrote) throw new HivemindError('conflict', 'This worker no longer holds the job lock.');
-}
-export function sessionJobStateFor(snapshot: JobSnapshot, session: SessionRecord): SessionJobState {
-  const found = snapshot.sessionJobStates.find(state => state.sessionId === session.id);
-
-  if (found !== undefined) return found;
-
-  const created = emptySessionJobState(session.id, session.workspace_id);
-
-  snapshot.sessionJobStates.push(created);
-
-  return created;
 }

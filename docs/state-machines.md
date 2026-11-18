@@ -279,10 +279,15 @@ A replacement is a start for a role that already has a session on the task. It u
 policy edges as a first start, and the same caps, plus a respawn cap. The new row gets the
 next `attempt` number, and its prompt tells the agent to read the task history first.
 
-The old session must be dead. The code accepts `ended` and `start_failed`. It also accepts a
-last platform status of `stopped`, `failed` or `unknown`, but nothing writes that status
-yet, so in practice only the first two apply. Anything else is a `conflict`:
-"That session still holds the role."
+The old session must be dead. The check accepts `ended` and `start_failed`. It also accepts a
+last platform status of `stopped`, `failed` or `unknown`, which the usage poll writes. Anything
+else is a `conflict`: "That session still holds the role."
+
+For every role except challenger, a second check follows. The `sessions_one_holder` index counts
+a row that is still `starting`, `live` or `released`, so the start is refused with a `conflict`
+("This role on this task already has a session.") until the old session is `ended` or
+`start_failed`. A platform status alone does not free the role. A challenger has no such index,
+so a status of `stopped`, `failed` or `unknown` is enough for a challenger replacement.
 
 ## Groups
 

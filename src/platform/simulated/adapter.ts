@@ -1,7 +1,7 @@
 import type { ConnectionId } from '@/domain/ids.ts';
 import { type Capability, capabilities } from '@/domain/platform.ts';
 import {
-  describeAdapter,
+  descriptionFor,
   end,
   findByKey,
   probe,
@@ -36,12 +36,14 @@ export type SimulatedPlatform = {
     result: import('@/domain/platform.ts').SendResult;
   }[];
   setSessionStatus(ref: string, status: string): void;
+  setSessionUsage(ref: string, usage: number): void;
+  setUsageUnit(unit: string, display: string): void;
   plantSession(key: string): void;
 };
 
 export function createSimulatedPlatform(
   connectionId: ConnectionId,
-  options?: { recordSent?: boolean }
+  options?: { recordSent?: boolean; usageUnit?: string; usageUnitDisplay?: string }
 ): SimulatedPlatform {
   const world: SimWorld = {
     enabled: new Set(capabilities),
@@ -54,6 +56,8 @@ export function createSimulatedPlatform(
     loseStart: false,
     sendResult: 'accepted',
     reportedUsage: 0,
+    usageUnit: options?.usageUnit ?? 'unit',
+    usageUnitDisplay: options?.usageUnitDisplay ?? 'Units',
     credential: 'simulated-credential',
   };
   const adapter: PlatformAdapter = {
@@ -65,7 +69,7 @@ export function createSimulatedPlatform(
     suspend: (_connection, ref) => suspend(world, ref),
     end: (_connection, ref) => end(world, ref),
     readUsage: (_connection, ref) => readUsage(world, ref),
-    describe: () => describeAdapter(),
+    describe: () => descriptionFor(world),
     findByKey: (_connection, key) => findByKey(world, key),
   };
   const controls: ConformanceControls = {
@@ -112,8 +116,8 @@ export function createSimulatedPlatform(
       capabilities: [...world.enabled],
       secret: world.credential,
       settings: {},
-      usageUnit: 'unit',
-      usageUnitDisplay: 'Units',
+      usageUnit: world.usageUnit,
+      usageUnitDisplay: world.usageUnitDisplay,
     }),
     drop(capability) {
       world.enabled.delete(capability);
@@ -131,6 +135,15 @@ export function createSimulatedPlatform(
 
       if (session !== undefined) session.rawStatus = status;
     },
+    setSessionUsage(ref, usage) {
+      const session = world.sessions.find(item => item.ref === ref);
+
+      if (session !== undefined) session.reported = usage;
+    },
+    setUsageUnit(unit, display) {
+      world.usageUnit = unit;
+      world.usageUnitDisplay = display;
+    },
     plantSession(key) {
       world.sessions.push({
         key,
@@ -140,6 +153,7 @@ export function createSimulatedPlatform(
         secret: null,
         rawStatus: 'working',
         usageFloor: 0,
+        reported: null,
         ended: false,
       });
     },

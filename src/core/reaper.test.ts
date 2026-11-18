@@ -1,18 +1,11 @@
 import { expect, spyOn, test } from 'bun:test';
-import {
-  createFirstAdministrator,
-  createOperatorKey,
-  openInstallation,
-} from '@/core/installation.ts';
 import { runReaper } from '@/core/reaper.ts';
 import { writeReaperJobState } from '@/core/reaper-actions.ts';
 import { reportTransition } from '@/core/report-records.ts';
 import { noteActivity } from '@/core/session-activity.ts';
 import { endSession } from '@/core/session-end.ts';
-import { openGroup } from '@/core/session-open.ts';
 import { startSession } from '@/core/session-start.ts';
 import { StoppedProcess } from '@/core/session-types.ts';
-import { createChildTask } from '@/core/task-records.ts';
 import {
   closedTaskGraceMs,
   emptySessionJobState,
@@ -21,61 +14,15 @@ import {
   startingResolveMs,
   suspendIdleMs,
 } from '@/domain/background-jobs.ts';
-import { defaultWorkspaceId, type GroupId, type SessionId } from '@/domain/ids.ts';
+import { defaultWorkspaceId } from '@/domain/ids.ts';
 import { PlatformError } from '@/domain/platform.ts';
 import { formatTime } from '@/domain/time.ts';
 import type { Store } from '@/ports/storage.ts';
 import { requirePresent } from '@/testing/assertions.ts';
-import { bootService } from '@/testing/boot.ts';
 import type { TestDeps } from '@/testing/deps.ts';
-import { checkoutGroup, note } from '@/testing/fixtures.ts';
-import { simulatedAdapterName } from '@/testing/platforms.ts';
+import { note } from '@/testing/fixtures.ts';
+import { addChild, team } from '@/testing/team.ts';
 import { runAfterTest } from '@/testing/teardown.ts';
-
-async function team() {
-  const service = await bootService();
-  const { deps } = service;
-  const installation = await openInstallation(deps);
-  const secret = requirePresent(
-    installation.bootstrapSecret,
-    'the empty store should print a bootstrap key'
-  );
-  const admin = await createFirstAdministrator(deps, {
-    bootstrapSecret: secret,
-    displayName: 'Ada',
-  });
-
-  await createOperatorKey(deps, {
-    bootstrapSecret: secret,
-    name: 'creator',
-    role: 'creator',
-    expiresAt: null,
-  });
-  await deps.store.saveConnection({
-    workspaceId: defaultWorkspaceId,
-    id: service.connectionId,
-    adapter: simulatedAdapterName,
-    createdAt: formatTime(deps.clock.now()),
-  });
-
-  const opened = await openGroup(deps, service.platforms, {
-    workspaceId: defaultWorkspaceId,
-    personId: admin.id,
-    ...checkoutGroup,
-    connectionId: service.connectionId,
-    verificationMode: 'before_merge',
-    notes: [],
-    idempotencyKey: 'background-jobs-group',
-    bodyHash: 'background-jobs-group',
-  });
-
-  expect(opened.outcome).toBe('live');
-  if (opened.outcome !== 'live') throw new Error('planner did not start');
-
-  await noteActivity(deps, defaultWorkspaceId, opened.session.id, false);
-
-  return { ...service, admin, opened, planner: opened.session };
-}
 
 test('the reaper ends sessions of a task closed for 60 minutes', async () => {
   const ctx = await team();
@@ -446,7 +393,7 @@ test('a failed platform stop is counted without loading all the sessions again',
   expect(snapshotLoads).toBe(1);
 });
 
-test('a settled ended session is not loaded into the next reaper run', async () => {
+test('an ended session is loaded until the platform status confirms it stopped', async () => {
   const ctx = await team();
 
   await endSession(ctx.deps, ctx.platforms, {
@@ -455,6 +402,26 @@ test('a settled ended session is not loaded into the next reaper run', async () 
     actor: { kind: 'service' },
     reason: 'The planner is done.',
   });
+
+  const idsLoaded = async () =>
+    (await ctx.deps.store.transact(tx => tx.loadJobSnapshot())).sessions.map(session => session.id);
+
+  expect(await idsLoaded()).toContain(ctx.planner.id);
+
+  await ctx.db.query(`UPDATE sessions SET last_status = 'stopped' WHERE id = $1`, [ctx.planner.id]);
+
+  expect(await idsLoaded()).not.toContain(ctx.planner.id);
+});
+
+test('an ended session with no platform reference is not loaded', async () => {
+  const ctx = await team();
+
+  await ctx.db.query(
+    `UPDATE sessions
+     SET life = 'ended', ended_at = created_at, token_hash = NULL, platform_session_ref = NULL
+     WHERE id = $1`,
+    [ctx.planner.id]
+  );
 
   const snapshot = await ctx.deps.store.transact(tx => tx.loadJobSnapshot());
 
@@ -564,35 +531,4 @@ async function savedJobState(deps: TestDeps, sessionId: string) {
 
 function advance(deps: TestDeps, ms: number): void {
   deps.clock.advance(ms);
-}
-
-async function addChild(deps: TestDeps, groupId: GroupId, plannerId: SessionId) {
-  const tasks = await deps.store.tasks(defaultWorkspaceId, groupId);
-  const root = tasks.find(task => task.parent_id === null);
-
-  if (root?.state === 'planned') {
-    await reportTransition(deps, {
-      workspaceId: defaultWorkspaceId,
-      groupId: root.group_id,
-      taskId: root.id,
-      expectedVersion: root.version,
-      actor: { kind: 'session', role: 'planner', sessionId: plannerId, live: true },
-      to: 'analyzing',
-      note,
-      evidence: [],
-      nextVerificationMode: null,
-    });
-  }
-
-  const created = await createChildTask(deps, {
-    workspaceId: defaultWorkspaceId,
-    groupId: root?.group_id ?? groupId,
-    actor: { sessionId: plannerId, live: true },
-    title: 'Tax interface',
-    description: 'A child task with enough description to be stored.',
-    verificationMode: null,
-    dependsOn: [],
-  });
-
-  return created.task.id;
 }

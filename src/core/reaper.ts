@@ -12,14 +12,18 @@ import {
   noteEndAttempt,
   noteOrphan,
   resolveStart,
-  sessionJobStateFor,
   suspendIdle,
   writeReaperJobState,
 } from '@/core/reaper-actions.ts';
 import { resumeEnd } from '@/core/session-end.ts';
 import { StoppedProcess } from '@/core/session-types.ts';
 import type { JobSnapshot } from '@/domain/background-jobs.ts';
-import { closedTaskGraceMs, reaperDeadlineMs, reaperIntervalMs } from '@/domain/background-jobs.ts';
+import {
+  closedTaskGraceMs,
+  reaperDeadlineMs,
+  reaperIntervalMs,
+  sessionJobStateFor,
+} from '@/domain/background-jobs.ts';
 import type { SessionRecord, Task } from '@/domain/model.ts';
 import { isClosedState } from '@/domain/model.ts';
 import { formatTime } from '@/domain/time.ts';

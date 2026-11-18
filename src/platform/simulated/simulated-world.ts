@@ -21,6 +21,7 @@ export type SimSession = {
   secret: string | null;
   rawStatus: string;
   usageFloor: number;
+  reported: number | null;
   ended: boolean;
 };
 
@@ -42,6 +43,8 @@ export type SimWorld = {
   loseStart: boolean;
   sendResult: SendResult;
   reportedUsage: number;
+  usageUnit: string;
+  usageUnitDisplay: string;
   credential: string;
 };
 
@@ -96,6 +99,7 @@ export async function start(world: SimWorld, input: StartSessionInput) {
     secret: input.secret?.value ?? null,
     rawStatus: 'working',
     usageFloor: 0,
+    reported: null,
     ended: false,
   };
 
@@ -183,19 +187,17 @@ export async function readUsage(world: SimWorld, ref: string) {
   failIfQueued(world, 'readUsage');
   const session = requireSession(world, ref);
 
-  if (world.reportedUsage < session.usageFloor) {
+  const reported = session.reported ?? world.reportedUsage;
+
+  if (reported < session.usageFloor) {
     world.logs.push('A usage reading went backwards. The earlier reading was kept.');
 
     return session.usageFloor;
   }
 
-  session.usageFloor = world.reportedUsage;
+  session.usageFloor = reported;
 
   return session.usageFloor;
-}
-
-export function describeAdapter() {
-  return description();
 }
 
 export async function findByKey(world: SimWorld, key: string): Promise<FindResult> {
@@ -231,11 +233,11 @@ function mapped(raw: string, logs: string[]): NeutralStatus {
   return 'working';
 }
 
-function description(): AdapterDescription {
+export function descriptionFor(world: SimWorld): AdapterDescription {
   return {
     name: 'simulated',
-    usageUnit: 'unit',
-    usageUnitDisplay: 'Units',
+    usageUnit: world.usageUnit,
+    usageUnitDisplay: world.usageUnitDisplay,
     modelTiers: [],
     platformSettingKeys: [],
     roleCeilings: { planner: 20, challenger: 10, implementer: 30, reviewer: 10, verifier: 10 },
