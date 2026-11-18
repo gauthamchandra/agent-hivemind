@@ -20,8 +20,8 @@ type LockLevel = (typeof lockOrder)[number];
  * certain is refused up front. Once the row is read, the lock is checked again as the root or
  * child task it is. {@code openChildren} locks every open child of a parent, so it counts as
  * locking child tasks. It is checked after its rows are read, because the children it returns
- * may all be held already. {@code lockGroupsWithOutbox} locks groups it cannot name, so it
- * counts as a group lock.
+ * may all be held already. {@code lockGroupsWithOutbox} locks several groups and returns their
+ * ids, so each counts as a group lock and can be locked again later.
  *
  * <p><b>IMPORTANT:</b> any new method that takes a row lock must be wrapped here, or the check
  * has a hole.
@@ -98,9 +98,11 @@ export function inLockOrder(work: UnitOfWork): UnitOfWork {
     async lockGroupsWithOutbox(deadline) {
       refuseIfBeforeDeepest('group');
 
-      await work.lockGroupsWithOutbox(deadline);
+      const groupIds = await work.lockGroupsWithOutbox(deadline);
 
-      deepestLevel = 'group';
+      for (const groupId of groupIds) hold(`group:${groupId}`, 'group');
+
+      return groupIds;
     },
 
     async openChildren(workspaceId, groupId, parentId) {
