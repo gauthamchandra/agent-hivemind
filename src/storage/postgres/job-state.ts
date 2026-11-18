@@ -1,17 +1,17 @@
 import type { UnitOfWork } from '@/ports/storage.ts';
+import { parseSessionJobState, sessionJobStateParams } from '@/storage/postgres/job-parse.ts';
 import { parseWait } from '@/storage/postgres/message-rows.ts';
 import { parseGroup } from '@/storage/postgres/parse-group.ts';
 import { parseTask } from '@/storage/postgres/parse-task.ts';
 import { parseSession } from '@/storage/postgres/session-read.ts';
 import type { Sql } from '@/storage/postgres/store-query.ts';
 import { many } from '@/storage/postgres/store-query.ts';
-import { parseWatch, watchParams } from '@/storage/postgres/supervision-parse.ts';
 
-export function supervisionFleet(sql: Sql): Pick<UnitOfWork, 'saveWatch' | 'loadFleet'> {
+export function jobState(sql: Sql): Pick<UnitOfWork, 'saveSessionJobState' | 'loadJobSnapshot'> {
   return {
-    async saveWatch(watch) {
+    async saveSessionJobState(jobState) {
       await sql.query(
-        `INSERT INTO session_watches (
+        `INSERT INTO session_job_state (
            session_id, workspace_id, unknown_streak, end_unconfirmed_runs, end_attempt_runs,
            inconclusive_runs, last_find, suspended_at, suspended_progress_at, orphan_ended
          ) VALUES (
@@ -25,17 +25,17 @@ export function supervisionFleet(sql: Sql): Pick<UnitOfWork, 'saveWatch' | 'load
            suspended_at = EXCLUDED.suspended_at,
            suspended_progress_at = EXCLUDED.suspended_progress_at,
            orphan_ended = EXCLUDED.orphan_ended`,
-        watchParams(watch)
+        sessionJobStateParams(jobState)
       );
     },
 
-    loadFleet() {
-      return readFleet(sql);
+    loadJobSnapshot() {
+      return readJobSnapshot(sql);
     },
   };
 }
 
-async function readFleet(sql: Sql) {
+async function readJobSnapshot(sql: Sql) {
   const groups = (await many(sql, 'SELECT * FROM groups', [])).map(parseGroup);
   const tasks = (await many(sql, 'SELECT * FROM tasks', [])).map(parseTask);
   const sessions = (
@@ -52,7 +52,9 @@ async function readFleet(sql: Sql) {
   const waits = (await many(sql, 'SELECT * FROM waits WHERE cleared_at IS NULL', [])).map(
     parseWait
   );
-  const watches = (await many(sql, 'SELECT * FROM session_watches', [])).map(parseWatch);
+  const sessionJobStates = (await many(sql, 'SELECT * FROM session_job_state', [])).map(
+    parseSessionJobState
+  );
 
-  return { groups, tasks, sessions, waits, watches };
+  return { groups, tasks, sessions, waits, sessionJobStates };
 }

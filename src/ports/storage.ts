@@ -1,4 +1,10 @@
 import type {
+  JobName,
+  JobSnapshot,
+  PlannedAction,
+  SessionJobState,
+} from '@/domain/background-jobs.ts';
+import type {
   ConnectionId,
   CopyId,
   GroupId,
@@ -26,7 +32,6 @@ import type {
   TaskEvent,
   Workspace,
 } from '@/domain/model.ts';
-import type { FleetSnapshot, JobIntent, JobName, SessionWatch } from '@/domain/supervision.ts';
 
 export type Occupancy = {
   live_sessions: number;
@@ -191,28 +196,28 @@ export interface UnitOfWork {
     workspaceId: WorkspaceId,
     groupId: GroupId
   ): Promise<{ messages: MessageRecord[]; copies: OutboxCopy[]; removed: number }>;
-  takeLease(input: {
+  takeJobLock(input: {
     job: JobName;
-    holder: string;
+    lockedBy: string;
     now: string;
     expiresAt: string;
     dueAt: string;
   }): Promise<number | null>;
-  holdLease(job: JobName, epoch: number, now: string): Promise<boolean>;
-  leaseStartedAt(job: JobName): Promise<string | null>;
-  insertIntent(input: {
+  holdJobLock(job: JobName, lockId: number, now: string): Promise<boolean>;
+  jobLockStartedAt(job: JobName): Promise<string | null>;
+  insertPlannedAction(input: {
     id: string;
     job: JobName;
     action: string;
     targetId: string;
     workspaceId: WorkspaceId;
-    epoch: number;
+    lockId: number;
     now: string;
   }): Promise<'inserted' | 'open' | 'stale'>;
-  openIntents(job: JobName): Promise<JobIntent[]>;
-  finishIntent(id: string, job: JobName, epoch: number, now: string): Promise<boolean>;
-  saveWatch(watch: SessionWatch): Promise<void>;
-  loadFleet(): Promise<FleetSnapshot>;
+  openPlannedActions(job: JobName): Promise<PlannedAction[]>;
+  finishPlannedAction(id: string, job: JobName, lockId: number, now: string): Promise<boolean>;
+  saveSessionJobState(jobState: SessionJobState): Promise<void>;
+  loadJobSnapshot(): Promise<JobSnapshot>;
   correctCounters(): Promise<string[]>;
 }
 

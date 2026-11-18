@@ -2,7 +2,7 @@ import type { UnitOfWork } from '@/ports/storage.ts';
 import type { Sql } from '@/storage/postgres/store-query.ts';
 import { many, readString } from '@/storage/postgres/store-query.ts';
 
-export function supervisionHousekeeping(sql: Sql): Pick<UnitOfWork, 'correctCounters'> {
+export function jobHousekeeping(sql: Sql): Pick<UnitOfWork, 'correctCounters'> {
   return {
     async correctCounters() {
       await sql.query('SELECT id FROM workspaces ORDER BY id FOR UPDATE');

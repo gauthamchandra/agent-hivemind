@@ -1,27 +1,27 @@
 import type { ServiceDeps } from '@/core/deps.ts';
 import {
+  finishRecordedPlannedAction,
+  type JobRunResult,
+  type RunOptions,
+  recordPlannedAction,
+  takeJob,
+} from '@/core/job-run.ts';
+import {
   endFor,
   isPlatformStopFailure,
   noteEndAttempt,
   noteOrphan,
   resolveStart,
+  sessionJobStateFor,
   suspendIdle,
-  watchFor,
-  writeReaperWatch,
+  writeReaperJobState,
 } from '@/core/reaper-actions.ts';
 import { resumeEnd } from '@/core/session-end.ts';
-import {
-  finishRecordedIntent,
-  type RunOptions,
-  recordIntent,
-  SupervisionHalted,
-  type TickResult,
-  takeJob,
-} from '@/core/supervision-run.ts';
+import { StoppedProcess } from '@/core/session-types.ts';
+import type { JobSnapshot } from '@/domain/background-jobs.ts';
+import { closedTaskGraceMs, reaperDeadlineMs, reaperIntervalMs } from '@/domain/background-jobs.ts';
 import type { SessionRecord, Task } from '@/domain/model.ts';
 import { isClosedState } from '@/domain/model.ts';
-import type { FleetSnapshot } from '@/domain/supervision.ts';
-import { closedTaskGraceMs, reaperDeadlineMs, reaperIntervalMs } from '@/domain/supervision.ts';
 import { formatTime } from '@/domain/time.ts';
 import type { Platforms } from '@/ports/platform.ts';
 
@@ -29,21 +29,21 @@ export async function runReaper(
   deps: ServiceDeps,
   platforms: Platforms,
   options: RunOptions
-): Promise<TickResult> {
-  const epoch = await takeJob(deps, 'reaper', options.workerId, reaperIntervalMs);
+): Promise<JobRunResult> {
+  const lockId = await takeJob(deps, 'reaper', options.workerId, reaperIntervalMs);
 
-  if (epoch === null) return { ran: false, epoch: null };
+  if (lockId === null) return { ran: false, lockId: null };
 
   const started = deps.clock.now().getTime();
-  const snapshot = await deps.store.transact(tx => tx.loadFleet());
+  const snapshot = await deps.store.transact(tx => tx.loadJobSnapshot());
 
   for (const session of snapshot.sessions) {
     if (deps.clock.now().getTime() - started > reaperDeadlineMs) break;
 
     try {
-      await tend(deps, platforms, snapshot, session, epoch, options);
+      await tend(deps, platforms, snapshot, session, lockId, options);
     } catch (error) {
-      if (error instanceof SupervisionHalted) throw error;
+      if (error instanceof StoppedProcess) throw error;
 
       console.error(
         `Reaper skipped session ${session.id}. It looks at that session again on the next run.`,
@@ -52,17 +52,17 @@ export async function runReaper(
     }
   }
 
-  await correctCaps(deps, epoch);
+  await correctCaps(deps, lockId);
 
-  return { ran: true, epoch };
+  return { ran: true, lockId };
 }
 
 async function tend(
   deps: ServiceDeps,
   platforms: Platforms,
-  snapshot: FleetSnapshot,
+  snapshot: JobSnapshot,
   session: SessionRecord,
-  epoch: number,
+  lockId: number,
   options: RunOptions
 ): Promise<void> {
   const task = snapshot.tasks.find(item => item.id === session.task_id);
@@ -70,28 +70,28 @@ async function tend(
 
   if (task === undefined || group === undefined) return;
 
-  if (await suspendIdle(deps, platforms, snapshot, session, task, epoch, options)) return;
-  if (await endClosedTask(deps, platforms, snapshot, session, task, epoch, options)) return;
+  if (await suspendIdle(deps, platforms, snapshot, session, task, lockId, options)) return;
+  if (await endClosedTask(deps, platforms, snapshot, session, task, lockId, options)) return;
 
-  await resolveStart(deps, platforms, snapshot, session, epoch, options);
-  await resumeUnfinishedEnd(deps, platforms, snapshot, session, epoch, options);
-  await noteOrphan(deps, platforms, snapshot, session, epoch, options);
+  await resolveStart(deps, platforms, snapshot, session, lockId, options);
+  await resumeUnfinishedEnd(deps, platforms, snapshot, session, lockId, options);
+  await noteOrphan(deps, platforms, snapshot, session, lockId, options);
 }
 
 async function endClosedTask(
   deps: ServiceDeps,
   platforms: Platforms,
-  snapshot: FleetSnapshot,
+  snapshot: JobSnapshot,
   session: SessionRecord,
   task: Task,
-  epoch: number,
+  lockId: number,
   options: RunOptions
 ): Promise<boolean> {
   if (session.life !== 'live' && session.life !== 'released') return false;
   if (!isClosedState(task.state) || task.closed_at === null) return false;
   if (deps.clock.now().getTime() - Date.parse(task.closed_at) < closedTaskGraceMs) return false;
 
-  await endFor(deps, platforms, snapshot, session, epoch, options, 'task_closed');
+  await endFor(deps, platforms, snapshot, session, lockId, options, 'task_closed');
 
   return true;
 }
@@ -99,9 +99,9 @@ async function endClosedTask(
 async function resumeUnfinishedEnd(
   deps: ServiceDeps,
   platforms: Platforms,
-  snapshot: FleetSnapshot,
+  snapshot: JobSnapshot,
   session: SessionRecord,
-  epoch: number,
+  lockId: number,
   options: RunOptions
 ): Promise<void> {
   if (session.life === 'start_failed') return;
@@ -110,11 +110,11 @@ async function resumeUnfinishedEnd(
   }
   if (session.life !== 'ended' && session.end_requested_at === null) return;
 
-  const intentId = await recordIntent(
+  const plannedActionId = await recordPlannedAction(
     deps,
     options,
     'reaper',
-    epoch,
+    lockId,
     'resume_end',
     session.id,
     session.workspace_id
@@ -125,15 +125,15 @@ async function resumeUnfinishedEnd(
       workspaceId: session.workspace_id,
       sessionId: session.id,
     });
-    const watch = watchFor(snapshot, session);
+    const jobState = sessionJobStateFor(snapshot, session);
 
-    watch.endAttemptRuns = 0;
-    watch.endUnconfirmedRuns = 0;
-    await writeReaperWatch(deps, epoch, watch);
-    await finishRecordedIntent(deps, 'reaper', epoch, intentId);
+    jobState.endAttemptRuns = 0;
+    jobState.endUnconfirmedRuns = 0;
+    await writeReaperJobState(deps, lockId, jobState);
+    await finishRecordedPlannedAction(deps, 'reaper', lockId, plannedActionId);
   } catch (error) {
     if (isPlatformStopFailure(error)) {
-      await noteEndAttempt(deps, snapshot, session, epoch, error);
+      await noteEndAttempt(deps, snapshot, session, lockId, error);
       return;
     }
 
@@ -141,10 +141,10 @@ async function resumeUnfinishedEnd(
   }
 }
 
-async function correctCaps(deps: ServiceDeps, epoch: number): Promise<void> {
+async function correctCaps(deps: ServiceDeps, lockId: number): Promise<void> {
   const now = formatTime(deps.clock.now());
   const corrected = await deps.store.transact(async tx => {
-    if (!(await tx.holdLease('reaper', epoch, now))) return [];
+    if (!(await tx.holdJobLock('reaper', lockId, now))) return [];
 
     return tx.correctCounters();
   });

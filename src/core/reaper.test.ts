@@ -5,7 +5,7 @@ import {
   openInstallation,
 } from '@/core/installation.ts';
 import { runReaper } from '@/core/reaper.ts';
-import { writeReaperWatch } from '@/core/reaper-actions.ts';
+import { writeReaperJobState } from '@/core/reaper-actions.ts';
 import { reportTransition } from '@/core/report-records.ts';
 import { noteActivity } from '@/core/session-activity.ts';
 import { endSession } from '@/core/session-end.ts';
@@ -13,16 +13,16 @@ import { openGroup } from '@/core/session-open.ts';
 import { startSession } from '@/core/session-start.ts';
 import { StoppedProcess } from '@/core/session-types.ts';
 import { createChildTask } from '@/core/task-records.ts';
-import { defaultWorkspaceId, type GroupId, type SessionId } from '@/domain/ids.ts';
-import { PlatformError } from '@/domain/platform.ts';
 import {
   closedTaskGraceMs,
-  emptyWatch,
+  emptySessionJobState,
   reaperIntervalMs,
   searchWindowMs,
   startingResolveMs,
   suspendIdleMs,
-} from '@/domain/supervision.ts';
+} from '@/domain/background-jobs.ts';
+import { defaultWorkspaceId, type GroupId, type SessionId } from '@/domain/ids.ts';
+import { PlatformError } from '@/domain/platform.ts';
 import { formatTime } from '@/domain/time.ts';
 import type { Store } from '@/ports/storage.ts';
 import { requirePresent } from '@/testing/assertions.ts';
@@ -65,8 +65,8 @@ async function team() {
     connectionId: service.connectionId,
     verificationMode: 'before_merge',
     notes: [],
-    idempotencyKey: 'supervision-group',
-    bodyHash: 'supervision-group',
+    idempotencyKey: 'background-jobs-group',
+    bodyHash: 'background-jobs-group',
   });
 
   expect(opened.outcome).toBe('live');
@@ -118,7 +118,7 @@ test('a session the reaper cannot handle is logged with its cause and does not s
   expect(cause).toBeInstanceOf(PlatformError);
 });
 
-test('a platform stop that fails is counted, kept as an open intent, and retried on the next run', async () => {
+test('a platform stop that fails is counted, kept as an open planned action, and retried on the next run', async () => {
   const ctx = await team();
   const warned = spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -130,21 +130,21 @@ test('a platform stop that fails is counted, kept as an open intent, and retried
   advance(ctx.deps, closedTaskGraceMs);
   await runReaper(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
-  const watch = await savedWatch(ctx.deps, implementer.id);
+  const jobState = await savedJobState(ctx.deps, implementer.id);
   const stillLive = await ctx.deps.store.session(defaultWorkspaceId, implementer.id);
 
-  expect(watch?.endAttemptRuns).toBe(1);
+  expect(jobState?.endAttemptRuns).toBe(1);
   expect(stillLive?.life).toBe('live');
   expect(warned).toHaveBeenCalledTimes(1);
   expect(warned.mock.calls[0]?.[0]).toContain('on its next run');
   expect(warned.mock.calls[0]?.[1]).toMatchObject({ code: 'unavailable' });
-  expect(await ctx.deps.store.transact(tx => tx.openIntents('reaper'))).toHaveLength(1);
+  expect(await ctx.deps.store.transact(tx => tx.openPlannedActions('reaper'))).toHaveLength(1);
 
   advance(ctx.deps, reaperIntervalMs);
   await runReaper(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   const retried = await ctx.deps.store.session(defaultWorkspaceId, implementer.id);
-  const open = await ctx.deps.store.transact(tx => tx.openIntents('reaper'));
+  const open = await ctx.deps.store.transact(tx => tx.openPlannedActions('reaper'));
 
   expect(retried?.life).toBe('ended');
   expect(open).toHaveLength(0);
@@ -276,30 +276,30 @@ test('a pending stop of a failed start is finished, and a finished one is left',
   expect(ctx.simulated.calls().filter(call => call === 'end').length).toBe(ends);
 });
 
-test('a reaper epoch that a later run replaced does not save the watch', async () => {
+test('a reaper lock id that a later run replaced does not save the job state', async () => {
   const ctx = await team();
   const first = await runReaper(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   advance(ctx.deps, reaperIntervalMs);
 
   const second = await runReaper(ctx.deps, ctx.platforms, { workerId: 'worker' });
-  const staleEpoch = requirePresent(first.epoch, 'the first run should take the lease');
-  const currentEpoch = requirePresent(second.epoch, 'the second run should take the lease');
-  const watch = emptyWatch(ctx.planner.id, defaultWorkspaceId);
+  const staleLockId = requirePresent(first.lockId, 'the first run should take the job lock');
+  const currentLockId = requirePresent(second.lockId, 'the second run should take the job lock');
+  const jobState = emptySessionJobState(ctx.planner.id, defaultWorkspaceId);
 
-  watch.endAttemptRuns = 4;
-  watch.lastFind = 'absent';
-  watch.inconclusiveRuns = 2;
-  watch.suspendedProgressAt = formatTime(ctx.deps.clock.now());
+  jobState.endAttemptRuns = 4;
+  jobState.lastFind = 'absent';
+  jobState.inconclusiveRuns = 2;
+  jobState.suspendedProgressAt = formatTime(ctx.deps.clock.now());
 
-  await expect(writeReaperWatch(ctx.deps, staleEpoch, watch)).rejects.toMatchObject({
+  await expect(writeReaperJobState(ctx.deps, staleLockId, jobState)).rejects.toMatchObject({
     code: 'conflict',
   });
-  expect(await savedWatch(ctx.deps, ctx.planner.id)).toBeUndefined();
+  expect(await savedJobState(ctx.deps, ctx.planner.id)).toBeUndefined();
 
-  await writeReaperWatch(ctx.deps, currentEpoch, watch);
+  await writeReaperJobState(ctx.deps, currentLockId, jobState);
 
-  expect(await savedWatch(ctx.deps, ctx.planner.id)).toMatchObject({
+  expect(await savedJobState(ctx.deps, ctx.planner.id)).toMatchObject({
     endAttemptRuns: 4,
     lastFind: 'absent',
     inconclusiveRuns: 2,
@@ -351,24 +351,24 @@ test('a session with no report for a day is suspended once, and stays live', asy
   await runReaper(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   const planner = await ctx.deps.store.session(defaultWorkspaceId, ctx.planner.id);
-  const watch = requirePresent(
-    await savedWatch(ctx.deps, ctx.planner.id),
+  const jobState = requirePresent(
+    await savedJobState(ctx.deps, ctx.planner.id),
     'the suspension should be remembered'
   );
 
   expect(suspends()).toBe(1);
   expect(planner?.life).toBe('live');
-  expect(watch.suspendedAt).not.toBeNull();
+  expect(jobState.suspendedAt).not.toBeNull();
 });
 
-test('a session that reports after the fleet was read is not suspended', async () => {
+test('a session that reports after the sessions were read is not suspended', async () => {
   const ctx = await team();
   const store: Store = {
     ...ctx.deps.store,
     transact: async work => {
       const result = await ctx.deps.store.transact(work);
 
-      if (typeof result === 'object' && result !== null && 'watches' in result) {
+      if (typeof result === 'object' && result !== null && 'sessionJobStates' in result) {
         await noteActivity(ctx.deps, defaultWorkspaceId, ctx.planner.id, true);
       }
 
@@ -403,34 +403,34 @@ test('resuming an end keeps what the reaper remembered about the session', async
   await runReaper(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   const ended = await ctx.deps.store.session(defaultWorkspaceId, ctx.planner.id);
-  const watch = requirePresent(
-    await savedWatch(ctx.deps, ctx.planner.id),
-    'the watch should outlive the end'
+  const jobState = requirePresent(
+    await savedJobState(ctx.deps, ctx.planner.id),
+    'the job state should outlive the end'
   );
 
   expect(ended?.life).toBe('ended');
-  expect(watch.suspendedAt).not.toBeNull();
-  expect(watch.endAttemptRuns).toBe(0);
+  expect(jobState.suspendedAt).not.toBeNull();
+  expect(jobState.endAttemptRuns).toBe(0);
 });
 
-test('a failed platform stop is counted without loading the whole fleet again', async () => {
+test('a failed platform stop is counted without loading all the sessions again', async () => {
   const ctx = await team();
   const warned = spyOn(console, 'warn').mockImplementation(() => {});
 
   runAfterTest(() => warned.mockRestore());
 
   const implementer = await startImplementerOnFailedTask(ctx);
-  let fleetLoads = 0;
+  let snapshotLoads = 0;
   const store: Store = {
     ...ctx.deps.store,
     transact: work =>
       ctx.deps.store.transact(tx =>
         work({
           ...tx,
-          loadFleet() {
-            fleetLoads += 1;
+          loadJobSnapshot() {
+            snapshotLoads += 1;
 
-            return tx.loadFleet();
+            return tx.loadJobSnapshot();
           },
         })
       ),
@@ -440,10 +440,10 @@ test('a failed platform stop is counted without loading the whole fleet again', 
   advance(ctx.deps, closedTaskGraceMs);
   await runReaper({ ...ctx.deps, store }, ctx.platforms, { workerId: 'worker' });
 
-  const watch = await savedWatch(ctx.deps, implementer.id);
+  const jobState = await savedJobState(ctx.deps, implementer.id);
 
-  expect(watch?.endAttemptRuns).toBe(1);
-  expect(fleetLoads).toBe(1);
+  expect(jobState?.endAttemptRuns).toBe(1);
+  expect(snapshotLoads).toBe(1);
 });
 
 test('a settled ended session is not loaded into the next reaper run', async () => {
@@ -456,9 +456,9 @@ test('a settled ended session is not loaded into the next reaper run', async () 
     reason: 'The planner is done.',
   });
 
-  const fleet = await ctx.deps.store.transact(tx => tx.loadFleet());
+  const snapshot = await ctx.deps.store.transact(tx => tx.loadJobSnapshot());
 
-  expect(fleet.sessions.map(session => session.id)).not.toContain(ctx.planner.id);
+  expect(snapshot.sessions.map(session => session.id)).not.toContain(ctx.planner.id);
 });
 
 test('a pending stop of an ended session is finished, and a finished one is left', async () => {
@@ -556,10 +556,10 @@ async function startImplementerOnFailedTask(ctx: Awaited<ReturnType<typeof team>
   return started.session;
 }
 
-async function savedWatch(deps: TestDeps, sessionId: string) {
-  const snapshot = await deps.store.transact(tx => tx.loadFleet());
+async function savedJobState(deps: TestDeps, sessionId: string) {
+  const snapshot = await deps.store.transact(tx => tx.loadJobSnapshot());
 
-  return snapshot.watches.find(item => item.sessionId === sessionId);
+  return snapshot.sessionJobStates.find(item => item.sessionId === sessionId);
 }
 
 function advance(deps: TestDeps, ms: number): void {

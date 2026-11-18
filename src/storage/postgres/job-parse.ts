@@ -1,5 +1,5 @@
+import type { SessionJobState } from '@/domain/background-jobs.ts';
 import { requireSessionId, requireWorkspaceId } from '@/domain/ids.ts';
-import type { SessionWatch } from '@/domain/supervision.ts';
 import { readBoolean } from '@/storage/postgres/session-read.ts';
 import type { Row } from '@/storage/postgres/store-query.ts';
 import {
@@ -10,22 +10,22 @@ import {
   unreadable,
 } from '@/storage/postgres/store-query.ts';
 
-export function watchParams(watch: SessionWatch): unknown[] {
+export function sessionJobStateParams(jobState: SessionJobState): unknown[] {
   return [
-    watch.sessionId,
-    watch.workspaceId,
-    watch.unknownStreak,
-    watch.endUnconfirmedRuns,
-    watch.endAttemptRuns,
-    watch.inconclusiveRuns,
-    watch.lastFind,
-    watch.suspendedAt,
-    watch.suspendedProgressAt,
-    watch.orphanEnded,
+    jobState.sessionId,
+    jobState.workspaceId,
+    jobState.unknownStreak,
+    jobState.endUnconfirmedRuns,
+    jobState.endAttemptRuns,
+    jobState.inconclusiveRuns,
+    jobState.lastFind,
+    jobState.suspendedAt,
+    jobState.suspendedProgressAt,
+    jobState.orphanEnded,
   ];
 }
 
-export function parseWatch(row: Row): SessionWatch {
+export function parseSessionJobState(row: Row): SessionJobState {
   const lastFind = readNullableString(row, 'last_find');
 
   if (
