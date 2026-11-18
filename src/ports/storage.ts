@@ -162,7 +162,8 @@ export interface UnitOfWork {
   clearSessionWaits(sessionId: SessionId, at: string): Promise<void>;
   groupSessions(workspaceId: WorkspaceId, groupId: GroupId): Promise<SessionRecord[]>;
   releaseExpiredClaims(now: string): Promise<void>;
-  lockGroupsWithOutbox(deadline: string): Promise<void>;
+  /** Lock every group with a copy to drop or deliver, in id order, and return their ids. */
+  lockGroupsWithOutbox(deadline: string): Promise<GroupId[]>;
   dropExpiredCopies(deadline: string): Promise<DroppedCopy[]>;
   dropUnavailableCopies(sessionId?: SessionId): Promise<DroppedCopy[]>;
   claimDelivery(workerId: string, now: string, until: string): Promise<ClaimedDelivery | null>;

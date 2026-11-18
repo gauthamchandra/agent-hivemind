@@ -988,6 +988,38 @@ test('a send locks the group before either session', async () => {
   expect(order?.indexOf('group')).toBeLessThan(order?.indexOf('session') ?? -1);
 });
 
+test('locking the groups with an outbox returns the groups that have a copy waiting', async () => {
+  const ctx = await team();
+
+  const lockedBefore = await ctx.deps.store.transact(tx =>
+    tx.lockGroupsWithOutbox(ctx.deps.clock.now().toISOString())
+  );
+
+  await sendNote(ctx, ctx.planner, ctx.implementer, 'Still queued.', 'bulk-ids');
+
+  const lockedAfter = await ctx.deps.store.transact(tx =>
+    tx.lockGroupsWithOutbox(ctx.deps.clock.now().toISOString())
+  );
+
+  expect(lockedBefore).toEqual([]);
+  expect(lockedAfter).toEqual([ctx.groupId]);
+});
+
+test('a group locked in bulk can be locked again after a session', async () => {
+  const ctx = await team();
+
+  await sendNote(ctx, ctx.planner, ctx.implementer, 'Still queued.', 'bulk-relock');
+
+  const relocked = await ctx.deps.store.transact(async tx => {
+    await tx.lockGroupsWithOutbox(ctx.deps.clock.now().toISOString());
+    await tx.lockSession(defaultWorkspaceId, ctx.implementer.id);
+
+    return tx.lockGroup(defaultWorkspaceId, ctx.groupId);
+  });
+
+  expect(requirePresent(relocked, 'the group should still be there').id).toBe(ctx.groupId);
+});
+
 test('a send locks the sender tasks before the sender session', async () => {
   const ctx = await team();
   const orders = watchTransactions(ctx.deps.store);

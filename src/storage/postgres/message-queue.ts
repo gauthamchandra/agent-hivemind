@@ -1,7 +1,8 @@
+import { requireGroupId } from '@/domain/ids.ts';
 import type { UnitOfWork } from '@/ports/storage.ts';
 import { claimedDelivery, droppedCopies, parseCopy } from '@/storage/postgres/message-rows.ts';
 import type { Sql } from '@/storage/postgres/store-query.ts';
-import { one, run } from '@/storage/postgres/store-query.ts';
+import { many, one, readString, run } from '@/storage/postgres/store-query.ts';
 
 const claimSql = `WITH head AS (
   SELECT DISTINCT ON (copy.recipient_id) copy.id
@@ -69,8 +70,8 @@ export function queueWork(
          WHERE state = 'claimed' AND claimed_until <= $1::timestamptz`,
         [now]
       ),
-    lockGroupsWithOutbox: deadline =>
-      run(
+    lockGroupsWithOutbox: async deadline => {
+      const locked = await many(
         sql,
         `SELECT id FROM groups
          WHERE id IN (
@@ -86,7 +87,10 @@ export function queueWork(
          ORDER BY id
          FOR UPDATE`,
         [deadline]
-      ),
+      );
+
+      return locked.map(row => requireGroupId(readString(row, 'id')));
+    },
     dropExpiredCopies: deadline => droppedCopies(sql, expiredSql, [deadline]),
     dropUnavailableCopies: sessionId => droppedCopies(sql, unavailableSql, [sessionId ?? null]),
     claimDelivery: (workerId, now, until) => claim(sql, workerId, now, until),
