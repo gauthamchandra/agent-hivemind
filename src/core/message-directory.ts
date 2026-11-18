@@ -2,6 +2,7 @@ import { enforceLimits, knownQuestion } from '@/core/message-limits.ts';
 import { recipientsFor } from '@/core/message-recipients.ts';
 import { requireRoot } from '@/core/record-checks.ts';
 import type { SendInput } from '@/core/send-message.ts';
+import { lockTasksBeforeSession } from '@/core/session-lock.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { GroupId, PersonId, SessionId, TaskId, WorkspaceId } from '@/domain/ids.ts';
 import type { Group, SessionRecord } from '@/domain/model.ts';
@@ -68,6 +69,9 @@ async function holdSession(
   }
 
   const group = await requireGroup(tx, input.workspaceId, peeked.group_id);
+
+  await lockTasksBeforeSession(tx, peeked);
+
   const session = await tx.lockSession(input.workspaceId, sender.sessionId);
 
   if (session === null || session.token_hash === null || session.group_id !== group.id) {

@@ -6,6 +6,15 @@ import type { SessionId, WorkspaceId } from '@/domain/ids.ts';
 import type { SessionRecord, SessionRole } from '@/domain/model.ts';
 import type { UnitOfWork } from '@/ports/storage.ts';
 
+/**
+ * Lock the root and the session's own task. Both come before the session in the lock order, so
+ * call this before locking the session. Locking them again afterwards waits for nothing.
+ */
+export async function lockTasksBeforeSession(tx: UnitOfWork, peeked: SessionRecord): Promise<void> {
+  await requireRoot(tx, peeked.workspace_id, peeked.group_id);
+  await tx.lockTask(peeked.workspace_id, peeked.task_id);
+}
+
 export async function lockOwned(
   tx: UnitOfWork,
   workspaceId: WorkspaceId,
