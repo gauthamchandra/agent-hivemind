@@ -268,8 +268,11 @@ end itself only after its task has closed. Beyond itself, a planner may end the 
 started and any member whose task has closed. A reviewer may end the members it started. An
 implementer may end the members it started once their task has closed.
 
-Closing a group does not end its sessions. Members end themselves, or the planner ends them,
-once their tasks are closed.
+Closing a group does not end its sessions in that request. The reaper ends every session of a
+task that has been closed for 60 minutes. It also resolves a `starting` row older than 10
+minutes, and it resumes an end that stopped after the intent was recorded. It does not start
+a session, and it does not end a session whose task is still open unless the platform does
+not know that session.
 
 ### Replacing a session
 
@@ -278,9 +281,8 @@ policy edges as a first start, and the same caps, plus a respawn cap. The new ro
 next `attempt` number, and its prompt tells the agent to read the task history first.
 
 The old session must be dead. The code accepts `ended` and `start_failed`. It also accepts a
-last platform status of `stopped`, `failed` or `unknown`, but nothing writes that status
-yet, so in practice only the first two apply. Anything else is a `conflict`:
-"That session still holds the role."
+last platform status of `stopped`, `failed` or `unknown`. The fleet check is what writes that
+status. Anything else is a `conflict`: "That session still holds the role."
 
 ## Groups
 

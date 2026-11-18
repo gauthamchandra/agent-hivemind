@@ -8,6 +8,10 @@ export function sendMessage(
   return call(io, 'POST', '/v1/messages', body, true);
 }
 
+export function escalate(io: Io, reason: string): Promise<Record<string, unknown>> {
+  return call(io, 'POST', '/v1/session/escalate', { reason }, true);
+}
+
 export function listInbox(io: Io, kind: string | undefined): Promise<Record<string, unknown>> {
   const path =
     kind === undefined ? '/v1/messages' : `/v1/messages?kind=${encodeURIComponent(kind)}`;

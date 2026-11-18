@@ -26,6 +26,15 @@ import type {
   TaskEvent,
   Workspace,
 } from '@/domain/model.ts';
+import type {
+  ConnectionWatch,
+  FindingRecord,
+  FleetSnapshot,
+  JobIntent,
+  JobName,
+  NotificationAttempt,
+  SessionWatch,
+} from '@/domain/supervision.ts';
 
 export type Occupancy = {
   live_sessions: number;
@@ -189,6 +198,46 @@ export interface UnitOfWork {
     workspaceId: WorkspaceId,
     groupId: GroupId
   ): Promise<{ messages: MessageRecord[]; copies: OutboxCopy[]; removed: number }>;
+  takeLease(input: {
+    job: JobName;
+    holder: string;
+    now: string;
+    expiresAt: string;
+    dueAt: string;
+  }): Promise<number | null>;
+  holdLease(job: JobName, epoch: number, now: string): Promise<boolean>;
+  insertIntent(input: {
+    id: string;
+    job: JobName;
+    action: string;
+    targetId: string;
+    workspaceId: WorkspaceId;
+    epoch: number;
+    now: string;
+  }): Promise<'inserted' | 'open' | 'stale'>;
+  intents(job: JobName): Promise<JobIntent[]>;
+  finishIntent(id: string, job: JobName, epoch: number, now: string): Promise<boolean>;
+  saveWatch(watch: SessionWatch): Promise<void>;
+  saveConnectionWatch(watch: ConnectionWatch): Promise<void>;
+  loadFleet(): Promise<FleetSnapshot>;
+  listFindings(workspaceId: WorkspaceId): Promise<FindingRecord[]>;
+  openFindingByKey(rule: string, targetId: string): Promise<FindingRecord | null>;
+  insertFinding(finding: FindingRecord): Promise<void>;
+  touchFinding(id: string, now: string): Promise<void>;
+  clearFinding(id: string, now: string): Promise<void>;
+  acknowledgeFinding(id: string, now: string, clear: boolean): Promise<FindingRecord | null>;
+  markFindingNotify(id: string): Promise<void>;
+  noteNotified(id: string, now: string): Promise<void>;
+  updateFindingReason(id: string, reason: string, now: string): Promise<void>;
+  countEscalations(groupId: GroupId, since: string): Promise<number>;
+  insertAttempt(attempt: NotificationAttempt): Promise<void>;
+  finishAttempt(id: string, state: 'sent' | 'failed', now: string): Promise<void>;
+  deleteExpiredCodes(now: string): Promise<void>;
+  deleteOldRateRows(before: string): Promise<void>;
+  deleteOldSpawns(before: string): Promise<void>;
+  groupsClosedBefore(instant: string): Promise<{ workspaceId: WorkspaceId; id: GroupId }[]>;
+  retainGroup(workspaceId: WorkspaceId, groupId: GroupId): Promise<void>;
+  correctCounters(): Promise<string[]>;
 }
 
 export interface Store {

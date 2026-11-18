@@ -166,4 +166,4 @@ jobs:
       - name: Two clients compete for one place
         env:
           HIVEMIND_POSTGRES_URL: postgres://hivemind:hivemind@localhost:5432/hivemind
-        run: bun test src/storage/postgres/spawn-gate.postgres.test.ts
+        run: bun test src/storage/postgres/spawn-gate.postgres.test.ts src/storage/postgres/supervision.postgres.test.ts

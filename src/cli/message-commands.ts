@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { listInbox, sendMessage } from '@/cli/hivemind-client.ts';
+import { escalate, listInbox, sendMessage } from '@/cli/hivemind-client.ts';
 import { flag, type Io, optional, type Parsed, print } from '@/cli/io.ts';
 
 type Outgoing = {
@@ -39,9 +39,22 @@ export async function messageCommand(io: Io, parsed: Parsed): Promise<number | n
       );
     case 'inbox':
       return inbox(io, parsed);
+    case 'escalate':
+      return escalateToOwner(io, parsed);
     default:
       return null;
   }
+}
+
+async function escalateToOwner(io: Io, parsed: Parsed): Promise<number> {
+  const response = await escalate(io, flag(parsed, 'reason'));
+
+  return print(
+    io,
+    response,
+    parsed.json,
+    'Escalated. The owner is told on the next check. Do not escalate again unless the reason changed.'
+  );
 }
 
 function chosen(
