@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { listInbox, sendMessage } from '@/cli/hivemind-client.ts';
-import { flag, type Io, optional, type Parsed, print } from '@/cli/io.ts';
+import { escalate, listInbox, sendMessage } from '@/cli/hivemind-client.ts';
+import { CliError, flag, type Io, optional, type Parsed, print } from '@/cli/io.ts';
 
 type Outgoing = {
   kind: string;
@@ -39,6 +39,8 @@ export async function messageCommand(io: Io, parsed: Parsed): Promise<number | n
       );
     case 'inbox':
       return inbox(io, parsed);
+    case 'escalate':
+      return escalateToOwner(io, parsed);
     default:
       return null;
   }
@@ -78,6 +80,29 @@ async function post(io: Io, parsed: Parsed, message: Outgoing): Promise<number> 
     parsed.json,
     `Sent ${id}. A recipient who is busy does not bounce the message: it stays queued and is tried again. Do not send it again.`
   );
+}
+
+async function escalateToOwner(io: Io, parsed: Parsed): Promise<number> {
+  const response = await escalate(io, flag(parsed, 'reason')).catch(refusalToEscalate);
+
+  return print(
+    io,
+    response,
+    parsed.json,
+    'Escalated. An alert is open for this session. Do not escalate again unless the reason changed.'
+  );
+}
+
+function refusalToEscalate(error: unknown): never {
+  if (error instanceof CliError && error.code === 'rate_limited') {
+    throw new CliError(
+      error.code,
+      error.message,
+      'Say it in your own platform session. Do not escalate again for an hour.'
+    );
+  }
+
+  throw error;
 }
 
 async function inbox(io: Io, parsed: Parsed): Promise<number> {

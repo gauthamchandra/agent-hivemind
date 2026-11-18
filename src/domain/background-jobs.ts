@@ -45,6 +45,8 @@ export const spendUnknownMs = 60 * 60 * 1000;
 export const endNotConfirmedRuns = 3;
 export const endPendingRuns = 6;
 export const startUnresolvedRuns = 6;
+export const escalationCap = 10;
+export const escalationWindowMs = 60 * 60 * 1000;
 
 const jobNames = ['usage_poll', 'reaper', 'housekeeping'] as const;
 export type JobName = (typeof jobNames)[number];
@@ -67,6 +69,7 @@ export const alertRules = [
   'budget_reached',
   'session_over_role_ceiling',
   'root_needs_decision',
+  'escalation',
   'delivery_backlog',
   'end_not_confirmed',
   'end_pending',

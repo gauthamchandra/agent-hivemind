@@ -54,7 +54,9 @@ export async function runHivemind(io: Io): Promise<number> {
       io.stderr(error.code);
       io.stderr(error.message);
       io.stderr(
-        instructions[error.code] ?? 'Stop and say what failed in your own platform session.'
+        error.hint ??
+          instructions[error.code] ??
+          'Stop and say what failed in your own platform session.'
       );
 
       return exitCode(error.code);
@@ -67,7 +69,7 @@ export async function runHivemind(io: Io): Promise<number> {
     return 11;
   }
   io.stderr(
-    'Run hivemind enroll, whoami, task, member, release, resume, send, ask, answer, relay, or inbox.'
+    'Run hivemind enroll, whoami, task, member, release, resume, send, ask, answer, relay, inbox, or escalate.'
   );
 
   return 12;

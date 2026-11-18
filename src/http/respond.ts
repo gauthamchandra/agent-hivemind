@@ -1,5 +1,6 @@
 import type { ServiceDeps } from '@/core/deps.ts';
 import { requireOperatorKey } from '@/core/installation.ts';
+import type { AlertRecord } from '@/domain/background-jobs.ts';
 import type { ErrorCode } from '@/domain/errors.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { ConnectionId, PersonId, WorkspaceId } from '@/domain/ids.ts';
@@ -76,6 +77,26 @@ export function pending(session: SessionRecord): Response {
     session_id: session.id,
     session: publicSession(session),
   });
+}
+
+export function publicAlert(alert: AlertRecord): {
+  id: string;
+  group_id: string | null;
+  rule: string;
+  severity: string;
+  reason: string | null;
+  opened_at: string;
+  last_seen_at: string;
+} {
+  return {
+    id: alert.id,
+    group_id: alert.groupId,
+    rule: alert.rule,
+    severity: alert.severity,
+    reason: alert.reason,
+    opened_at: alert.openedAt,
+    last_seen_at: alert.lastSeenAt,
+  };
 }
 
 export function publicSession(session: SessionRecord): Omit<SessionRecord, 'token_hash'> {

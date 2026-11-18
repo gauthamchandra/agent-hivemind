@@ -289,6 +289,18 @@ a row that is still `starting`, `live` or `released`, so the start is refused wi
 `start_failed`. A platform status alone does not free the role. A challenger has no such index,
 so a status of `stopped`, `failed` or `unknown` is enough for a challenger replacement.
 
+### Escalating to a person
+
+A live or released session can escalate with `hivemind escalate --reason`. The call opens one
+`escalation` alert for that session. A second call with a different reason updates the alert, and
+one with the same reason changes nothing. The usage poll keeps the alert open until the session
+ends, then clears it. The reason is capped at 1,024 bytes and has this service's tokens redacted.
+
+A group opens at most ten escalations in an hour, and the next one is `rate_limited`. A session
+that already has an alert can still update it. A session that has ended cannot escalate: ending
+clears its token, so the answer is `unauthenticated`. A session whose end is requested but not
+finished gets `session_not_active`.
+
 ## Groups
 
 A group is `open` until its root task closes, then `closed`. A closed group refuses new

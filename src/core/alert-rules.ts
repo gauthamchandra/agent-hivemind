@@ -1,6 +1,11 @@
 import { considerSession, cycleGroups } from '@/core/alert-session-rules.ts';
 import { held, push } from '@/core/alert-severity.ts';
-import type { AlertRule, AlertSeverity, SessionJobState } from '@/domain/background-jobs.ts';
+import type {
+  AlertRecord,
+  AlertRule,
+  AlertSeverity,
+  SessionJobState,
+} from '@/domain/background-jobs.ts';
 import {
   deliveryBacklogMs,
   roleExpectedToAct,
@@ -39,6 +44,7 @@ export type Evaluation = {
   relayed: ReadonlySet<string>;
   orphanEnded: readonly { sessionId: string; groupId: string }[];
   expiredCodes: ReadonlySet<string>;
+  alerts: readonly AlertRecord[];
 };
 
 export type Indexes = {

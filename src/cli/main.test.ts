@@ -226,6 +226,42 @@ test('release and resume talk to the service', async () => {
   expect(await runHivemind({ ...cli.io, args: ['resume'] })).toBe(0);
   expect(cli.out.join('\n')).toContain('Resumed the session.');
 });
+test('escalate sends the reason and says an alert is open for the session', async () => {
+  const cli = await enrolledCli();
+
+  expect(
+    await runHivemind({ ...cli.io, args: ['escalate', '--reason', 'Blocked on a decision.'] })
+  ).toBe(0);
+  expect(cli.out.join('\n')).toContain('Escalated. An alert is open for this session.');
+});
+
+test('a refused escalation tells the session to say it in its own platform session', async () => {
+  const err: string[] = [];
+  const code = await runHivemind({
+    args: ['escalate', '--reason', 'Blocked on a decision.'],
+    env: { HIVEMIND_URL: 'http://127.0.0.1:3000', HIVEMIND_TOKEN: 'ses_token' },
+    stdout: () => {},
+    stderr: line => {
+      err.push(line);
+    },
+    fetch: (async () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            code: 'rate_limited',
+            message: 'This group has opened its escalations for the hour.',
+          },
+        }),
+        { status: 429, headers: { 'content-type': 'application/json' } }
+      )) as unknown as typeof fetch,
+    sleep: async () => {},
+  });
+
+  expect(code).not.toBe(0);
+  expect(err.join('\n')).toContain('Say it in your own platform session.');
+  expect(err.join('\n')).not.toContain('Wait, then try again.');
+});
+
 test('whoami without json prints the role', async () => {
   const cli = await enrolledCli();
 

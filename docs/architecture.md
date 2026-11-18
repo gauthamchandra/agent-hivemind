@@ -345,11 +345,14 @@ sessions that are already running. See [ADR 0005](adr/0005-spend-is-polled-while
 and [ADR 0007](adr/0007-a-job-lock-keeps-each-background-job-to-one-process.md).
 
 At the end of each run the usage poll also decides which alerts should be open. An alert is a row
-for a condition a person must see, such as a session that looks stopped while its task is open,
-a session waiting for a person, spend at 80 percent of the budget, or a task with no activity for
+for a condition a person must see, such as a session that looks stopped while its task is open, a
+session waiting for a person, spend at 80 percent of the budget, or a task with no activity for
 hours. The key is the rule and the target. The poll opens a missing alert, keeps an open one, and
 clears one whose condition ended. A rule that needs the platform's answer neither opens nor clears
-while that connection failed to answer in the run.
+while that connection failed to answer in the run. `hivemind escalate` lets a session ask for
+help. It opens one `escalation` alert for the session, and it is the one request that writes an
+alert. A second call updates the reason, and the poll keeps the alert open until the session ends.
+A group may open ten escalations in an hour.
 
 ## Surviving failure
 

@@ -99,6 +99,7 @@ async function sessionRoutes(
     request.method !== 'GET' &&
     request.method !== 'HEAD' &&
     path !== '/v1/messages' &&
+    path !== '/v1/session/escalate' &&
     !path.startsWith('/v1/waits');
   const active = await noteActivity(deps, caller.workspace_id, caller.id, reports);
   return (

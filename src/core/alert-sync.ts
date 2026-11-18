@@ -137,6 +137,7 @@ function evaluationOf(
         .filter(code => Date.parse(code.expiresAt) <= nowMs)
         .map(code => code.sessionId)
     ),
+    alerts: snapshot.alerts,
   };
 }
 

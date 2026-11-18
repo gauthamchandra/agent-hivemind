@@ -1,6 +1,7 @@
 import { expect, spyOn, test } from 'bun:test';
 import { syncAlerts } from '@/core/alert-sync.ts';
 import { drainOutbox } from '@/core/delivery.ts';
+import { escalateSession } from '@/core/escalate.ts';
 import { raiseBudget } from '@/core/group-records.ts';
 import {
   createFirstAdministrator,
@@ -11,6 +12,7 @@ import { takeJob } from '@/core/job-run.ts';
 import { runReaper } from '@/core/reaper.ts';
 import { sendMessage } from '@/core/send-message.ts';
 import { noteActivity } from '@/core/session-activity.ts';
+import { endSession } from '@/core/session-end.ts';
 import { openGroup } from '@/core/session-open.ts';
 import { startSession } from '@/core/session-start.ts';
 import { StoppedProcess } from '@/core/session-types.ts';
@@ -211,6 +213,28 @@ test('an authentication failure does not open an alert that needs the status', a
   await runUsagePoll(ctx.deps, platforms, { workerId: 'worker' });
 
   expect(await openAlerts(ctx.deps, 'session_waiting_for_person')).toHaveLength(0);
+});
+
+test('an escalation stays open while its session lives and clears when it ends', async () => {
+  const ctx = await team();
+
+  await escalateSession(ctx.deps, {
+    workspaceId: defaultWorkspaceId,
+    sessionId: ctx.planner.id,
+    reason: 'I am blocked on a decision.',
+  });
+  await runUsagePoll(ctx.deps, ctx.platforms, { workerId: 'worker' });
+  expect(await openAlerts(ctx.deps, 'escalation')).toHaveLength(1);
+
+  await endSession(ctx.deps, ctx.platforms, {
+    workspaceId: defaultWorkspaceId,
+    sessionId: ctx.planner.id,
+    actor: { kind: 'service' },
+    reason: 'The planner is done.',
+  });
+  advance(ctx.deps, usagePollIntervalMs);
+  await runUsagePoll(ctx.deps, ctx.platforms, { workerId: 'worker' });
+  expect(await openAlerts(ctx.deps, 'escalation')).toHaveLength(0);
 });
 
 test('a worker with an old lock id writes no alert', async () => {

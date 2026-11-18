@@ -1,10 +1,17 @@
+import { escalateSession } from '@/core/escalate.ts';
 import { endSession } from '@/core/session-end.ts';
 import { releaseSession, resumeSession } from '@/core/session-release.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { SessionRecord } from '@/domain/model.ts';
 import { sha256Hex } from '@/domain/secret.ts';
 import type { HttpOptions } from '@/http/respond.ts';
-import { json, publicSession, readString, requireIdempotency } from '@/http/respond.ts';
+import {
+  json,
+  publicAlert,
+  publicSession,
+  readString,
+  requireIdempotency,
+} from '@/http/respond.ts';
 
 export async function selfRoute(
   options: HttpOptions,
@@ -64,6 +71,16 @@ export async function selfRoute(
     });
 
     return json(200, { session: publicSession(ended) });
+  }
+
+  if (request.method === 'POST' && path === '/v1/session/escalate') {
+    const alert = await escalateSession(deps, {
+      workspaceId: active.workspace_id,
+      sessionId: active.id,
+      reason: readString(body, 'reason'),
+    });
+
+    return json(200, { alert: publicAlert(alert) });
   }
 
   if (request.method === 'GET' && path === '/v1/group') {
