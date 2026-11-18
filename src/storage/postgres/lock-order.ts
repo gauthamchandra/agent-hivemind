@@ -1,6 +1,6 @@
 import type { UnitOfWork } from '@/ports/storage.ts';
 
-const lockOrder = ['workspace', 'group', 'root task', 'child task', 'session'] as const;
+const lockOrder = ['lease', 'workspace', 'group', 'root task', 'child task', 'session'] as const;
 
 type LockLevel = (typeof lockOrder)[number];
 
@@ -11,6 +11,9 @@ type LockLevel = (typeof lockOrder)[number];
  * locks in different orders can deadlock, and an in-process database runs one transaction at a
  * time, so no test would ever see it. This turns the first out-of-order lock on any path into an
  * error.
+ *
+ * <p>A supervision job's lease row is the first level. {@code takeLease}, {@code holdLease},
+ * {@code insertIntent}, and {@code finishIntent} write that row, so each is checked before it runs.
  *
  * <p>Locking something the transaction already holds is allowed, because it waits for nothing.
  * A lock that finds no row holds nothing, so it does not count.
@@ -67,6 +70,9 @@ export function inLockOrder(work: UnitOfWork): UnitOfWork {
 
   return {
     ...work,
+    ...leaseWrites(work, job => {
+      if (!held.has(`lease:${job}`)) hold(`lease:${job}`, 'lease');
+    }),
 
     lockWorkspace(id) {
       return lock(
@@ -105,6 +111,17 @@ export function inLockOrder(work: UnitOfWork): UnitOfWork {
       return groupIds;
     },
 
+    async correctCounters() {
+      refuseIfBeforeDeepest('workspace');
+
+      const corrected = await work.correctCounters();
+
+      hold('every workspace', 'workspace');
+      hold('every group', 'group');
+
+      return corrected;
+    },
+
     async openChildren(workspaceId, groupId, parentId) {
       const children = await work.openChildren(workspaceId, groupId, parentId);
 
@@ -122,6 +139,34 @@ export function inLockOrder(work: UnitOfWork): UnitOfWork {
         () => work.lockSession(workspaceId, id),
         () => 'session'
       );
+    },
+  };
+}
+
+function leaseWrites(
+  work: UnitOfWork,
+  holdLeaseLock: (job: string) => void
+): Pick<UnitOfWork, 'takeLease' | 'holdLease' | 'insertIntent' | 'finishIntent'> {
+  return {
+    takeLease(input) {
+      holdLeaseLock(input.job);
+
+      return work.takeLease(input);
+    },
+    holdLease(job, epoch, now) {
+      holdLeaseLock(job);
+
+      return work.holdLease(job, epoch, now);
+    },
+    insertIntent(input) {
+      holdLeaseLock(input.job);
+
+      return work.insertIntent(input);
+    },
+    finishIntent(id, job, epoch, now) {
+      holdLeaseLock(job);
+
+      return work.finishIntent(id, job, epoch, now);
     },
   };
 }

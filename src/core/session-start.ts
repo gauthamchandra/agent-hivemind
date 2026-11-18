@@ -18,7 +18,7 @@ import type { SessionId, WorkspaceId } from '@/domain/ids.ts';
 import type { SessionRecord } from '@/domain/model.ts';
 import { isRefusal, PlatformError, type PlatformErrorClass } from '@/domain/platform.ts';
 import { formatTime } from '@/domain/time.ts';
-import type { Platforms, StartSessionResult } from '@/ports/platform.ts';
+import type { FindResult, Platforms, StartSessionResult } from '@/ports/platform.ts';
 import type { UnitOfWork } from '@/ports/storage.ts';
 
 const startsInFlight = new Set<SessionId>();
@@ -127,7 +127,8 @@ export async function recoverPendingStart(
 export async function recoverStart(
   deps: ServiceDeps,
   platforms: Platforms,
-  input: { workspaceId: WorkspaceId; sessionId: SessionId }
+  input: { workspaceId: WorkspaceId; sessionId: SessionId },
+  findOutcomeAlreadyKnown?: FindResult
 ): Promise<SessionRecord> {
   const current = await deps.store.session(input.workspaceId, input.sessionId);
 
@@ -145,7 +146,7 @@ export async function recoverStart(
     return current;
   }
 
-  const found = await findOnPlatform(deps, platforms, current);
+  const found = findOutcomeAlreadyKnown ?? (await findOnPlatform(deps, platforms, current));
 
   if (found.outcome === 'inconclusive') return current;
 

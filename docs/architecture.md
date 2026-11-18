@@ -80,7 +80,7 @@ Code is split into layers, and Biome fails the build when a layer imports one it
 | domain            | Types, ids, errors, and the task transition tables with the function that applies them | Nothing else                               |
 | policy            | The permission table: which role may take which action, where                          | domain                                     |
 | ports             | The interfaces the services need: storage and the platform adapter                     | domain                                     |
-| core              | The services: open a group, report a transition, start, end, release, resume, enroll   | domain, policy, ports                      |
+| core              | The services, including the reaper that runs from the worker's lease                   | domain, policy, ports                      |
 | storage           | The Postgres store and its migrations                                                  | domain, ports                              |
 | platform adapters | One adapter per agent platform. Only a simulated one exists                            | domain, ports                              |
 | http              | Routes, credential checks, error mapping                                               | domain, ports, core                        |
@@ -139,7 +139,7 @@ whatever hosts the agent sessions.
 | probe                  | Lists the capabilities the connection has.                                                                 | No                        |
 | read status, read many | Read a session's neutral status: working, idle, waiting for a person, suspended, stopped, failed, unknown. | No                        |
 | send                   | Messages a running session. Results: accepted, busy, rate limited, gone.                                   | No                        |
-| suspend, describe      | Pause a session. Describe the adapter.                                                                     | No                        |
+| suspend, describe      | Pause a session. Describe the adapter.                                                                     | Suspend, by the reaper    |
 
 Failures carry one of six classes: `auth`, `rate_limited`, `quota`, `invalid`, `not_found`,
 `unavailable`. A message never carries a credential, a prompt, or a message body. The first
@@ -260,6 +260,9 @@ default the service starts an in-process Postgres that keeps its files in a data
 | `spawn_log`            | One row per start, which the spawn-rate cap counts.                                   |
 | `idempotency_keys`     | Every remembered request and its stored response.                                     |
 | `connections`          | Which adapter the workspace uses.                                                     |
+| `leases`               | One row per job: holder, expiry, and epoch. No workspace column.                      |
+| `job_intents`          | An action a job committed before it called the platform. One open row per target.     |
+| `session_watches`      | What the reaper remembers about one session between runs.                             |
 
 The database enforces what code must never break:
 
@@ -286,8 +289,9 @@ change in the same transaction that inserts, ends, or releases a session. Two ov
 starts therefore cannot both take the last place. A CI job runs two clients against a Postgres
 server, competing for the last place, to prove it.
 
-A transaction that locks more than one of these takes the locks in one order: workspace, group,
-root task, child task, session. A different order is how two requests deadlock.
+A transaction that locks more than one of these takes the locks in one order: a supervision
+job's lease row, workspace, group, root task, child task, session. A different order is how two
+requests deadlock.
 
 The store refuses a lock that comes after a later one in this list, so a path that breaks the
 order fails whichever test runs it. Locking something the transaction already holds is allowed.
@@ -459,8 +463,9 @@ This list is the gap between what the code models and what a running system can 
    timer. It does not poll spend. The polling job comes first and only blocks starts. The
    over-budget response comes after it: tell the running agents to finish, then end them after a
    five-minute grace period. Delivery to a running session exists. A record of when the grace
-   period ends does not, and the reaper role comes later still. See
-   [ADR 0005](adr/0005-spend-is-polled-while-sessions-run.md).
+   period ends does not. A reaper that ends an agent for context rot is not built either. The
+   reaper that is built ends sessions whose task has been closed, and it finishes a start or an
+   end that stopped halfway. See [ADR 0005](adr/0005-spend-is-polled-while-sessions-run.md).
 3. **No real platform.** The only adapter is the simulated one. It lives in the service's
    process, hands out made-up addresses, and records sessions without running an agent. A local
    run starts a planner that never reports. The tests are where a whole group runs.
@@ -469,8 +474,8 @@ This list is the gap between what the code models and what a running system can 
    person as the actor.
 5. **Nothing starts a second planner.** A person starts the planner when opening a group, and
    no policy row lets a session start one. A group whose planner ends cannot get another.
-6. **Platform status is never read.** The adapter's suspend, read status, read many and probe
-   are never called, and environment reports have a policy row but no route. So a session's
+6. **Platform status is never read.** The adapter's read status, read many and probe are never
+   called, and environment reports have a policy row but no route. So a session's
    last status is never written, and a replacement works only for a session that is `ended` or
    `start_failed`.
 7. **Three workspace limits are stored and never checked.** `live_groups`, `groups_per_day` and

@@ -21,6 +21,9 @@ import {
   type Sql,
   type SqlDatabase,
 } from '@/storage/postgres/store-query.ts';
+import { supervisionFleet } from '@/storage/postgres/supervision-fleet.ts';
+import { supervisionHousekeeping } from '@/storage/postgres/supervision-housekeeping.ts';
+import { supervisionLease } from '@/storage/postgres/supervision-lease.ts';
 import { taskWork } from '@/storage/postgres/task-work.ts';
 
 export type { Sql, SqlDatabase } from '@/storage/postgres/store-query.ts';
@@ -121,5 +124,8 @@ function unitOfWork(sql: Sql): UnitOfWork {
     ...groupWork(sql),
     ...taskWork(sql),
     ...messageWork(sql),
+    ...supervisionLease(sql),
+    ...supervisionFleet(sql),
+    ...supervisionHousekeeping(sql),
   });
 }

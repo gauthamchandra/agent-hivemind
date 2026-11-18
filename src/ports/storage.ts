@@ -26,6 +26,7 @@ import type {
   TaskEvent,
   Workspace,
 } from '@/domain/model.ts';
+import type { FleetSnapshot, JobIntent, JobName, SessionWatch } from '@/domain/supervision.ts';
 
 export type Occupancy = {
   live_sessions: number;
@@ -190,6 +191,29 @@ export interface UnitOfWork {
     workspaceId: WorkspaceId,
     groupId: GroupId
   ): Promise<{ messages: MessageRecord[]; copies: OutboxCopy[]; removed: number }>;
+  takeLease(input: {
+    job: JobName;
+    holder: string;
+    now: string;
+    expiresAt: string;
+    dueAt: string;
+  }): Promise<number | null>;
+  holdLease(job: JobName, epoch: number, now: string): Promise<boolean>;
+  leaseStartedAt(job: JobName): Promise<string | null>;
+  insertIntent(input: {
+    id: string;
+    job: JobName;
+    action: string;
+    targetId: string;
+    workspaceId: WorkspaceId;
+    epoch: number;
+    now: string;
+  }): Promise<'inserted' | 'open' | 'stale'>;
+  openIntents(job: JobName): Promise<JobIntent[]>;
+  finishIntent(id: string, job: JobName, epoch: number, now: string): Promise<boolean>;
+  saveWatch(watch: SessionWatch): Promise<void>;
+  loadFleet(): Promise<FleetSnapshot>;
+  correctCounters(): Promise<string[]>;
 }
 
 export interface Store {
