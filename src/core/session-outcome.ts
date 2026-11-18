@@ -35,12 +35,11 @@ export function isPlatformErrorClass(value: unknown): value is PlatformErrorClas
 
 /** A replay still has a platform stop or a usage read to finish. Other terminal rows do not. */
 export function owesCleanup(session: SessionRecord): boolean {
-  if (session.life === 'start_failed') return session.final_usage_pending;
+  const pending = session.final_usage_pending || session.platform_stop_pending;
 
-  return (
-    session.life === 'ended' &&
-    (session.final_usage_pending || session.platform_session_ref === null)
-  );
+  if (session.life === 'start_failed') return pending;
+
+  return session.life === 'ended' && (pending || session.platform_session_ref === null);
 }
 
 export function outcomeFrom(session: SessionRecord): StartOutcome {

@@ -23,7 +23,10 @@ export async function reclaimCompensatedStart(
 ): Promise<SessionRecord> {
   if (session.life !== 'start_failed') return session;
 
-  if (session.platform_session_ref !== null && session.final_usage_pending) {
+  if (
+    session.platform_session_ref !== null &&
+    (session.final_usage_pending || session.platform_stop_pending)
+  ) {
     return stopCompensatedPlatform(deps, platforms, session);
   }
 
@@ -49,12 +52,18 @@ export async function reclaimCompensatedStart(
     locked.platform_session_ref = found.platformSessionRef;
     locked.platform_address = found.address;
     locked.final_usage_pending = true;
+    locked.platform_stop_pending = true;
     await tx.updateSession(locked);
 
     return locked;
   });
 
-  if (attached.platform_session_ref === null || !attached.final_usage_pending) return attached;
+  if (
+    attached.platform_session_ref === null ||
+    (!attached.final_usage_pending && !attached.platform_stop_pending)
+  ) {
+    return attached;
+  }
 
   return stopCompensatedPlatform(deps, platforms, attached);
 }
@@ -65,16 +74,14 @@ export async function stopCompensatedPlatform(
   platforms: Platforms,
   session: SessionRecord
 ): Promise<SessionRecord> {
-  if (
-    session.life !== 'start_failed' ||
-    session.platform_session_ref === null ||
-    !session.final_usage_pending
-  ) {
-    return session;
+  if (session.life !== 'start_failed' || session.platform_session_ref === null) return session;
+  if (!session.platform_stop_pending && !session.final_usage_pending) return session;
+
+  if (session.platform_stop_pending) {
+    await endOnPlatform(deps, platforms, session, session.platform_session_ref);
   }
 
-  await endOnPlatform(deps, platforms, session, session.platform_session_ref);
-  await readFinalUsage(deps, platforms, session);
+  if (session.final_usage_pending) await readFinalUsage(deps, platforms, session);
 
   return (await deps.store.session(session.workspace_id, session.id)) ?? session;
 }
