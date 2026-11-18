@@ -287,8 +287,13 @@ starts therefore cannot both take the last place. A CI job runs two clients agai
 server, competing for the last place, to prove it.
 
 A transaction that locks more than one of these takes the locks in one order: workspace, group,
-root task, child task, session. Tests pin the pairs that matter: group before root, root before
-child, task before session. A different order is how two requests deadlock.
+root task, child task, session. A different order is how two requests deadlock.
+
+The store refuses a lock that comes after a later one in this list, so a path that breaks the
+order fails whichever test runs it. Locking something the transaction already holds is allowed.
+The in-process database runs one transaction at a time and cannot show a deadlock itself, so a
+race needs a test with two connections in a `*.postgres.test.ts` file, which CI runs against a
+PostgreSQL server.
 
 ### Caps
 

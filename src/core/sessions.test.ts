@@ -1762,6 +1762,134 @@ test('the root is locked before a child', async () => {
     expect(order.indexOf(ctx.opened.root.id)).toBeLessThan(order.indexOf(taskId));
   }
 });
+test('a transaction that locks the group after a session is refused', async () => {
+  const ctx = await withPlanner();
+
+  const outOfOrder = ctx.deps.store.transact(async tx => {
+    await tx.lockSession(defaultWorkspaceId, ctx.planner.id);
+    await tx.lockGroup(defaultWorkspaceId, ctx.opened.group.id);
+  });
+
+  await expect(outOfOrder).rejects.toThrow(
+    'Lock order violated: group locked after session. The order is workspace, group, root task, child task, session.'
+  );
+});
+
+test('a transaction that locks a child before the root is refused', async () => {
+  const ctx = await withPlanner();
+  const taskId = await childTask(ctx.deps, ctx.opened.group.id, ctx.planner.id, 'Child first');
+
+  const outOfOrder = ctx.deps.store.transact(async tx => {
+    await tx.lockTask(defaultWorkspaceId, taskId);
+    await tx.lockTask(defaultWorkspaceId, ctx.opened.root.id);
+  });
+
+  await expect(outOfOrder).rejects.toThrow(
+    'Lock order violated: root task locked after child task.'
+  );
+});
+
+test('a transaction may lock in the documented order and lock a held lock again', async () => {
+  const ctx = await withPlanner();
+  const taskId = await childTask(ctx.deps, ctx.opened.group.id, ctx.planner.id, 'In order');
+
+  const group = await ctx.deps.store.transact(async tx => {
+    await tx.lockWorkspace(defaultWorkspaceId);
+    await tx.lockGroup(defaultWorkspaceId, ctx.opened.group.id);
+    await tx.lockTask(defaultWorkspaceId, ctx.opened.root.id);
+    await tx.lockTask(defaultWorkspaceId, taskId);
+    await tx.lockSession(defaultWorkspaceId, ctx.planner.id);
+
+    return tx.lockGroup(defaultWorkspaceId, ctx.opened.group.id);
+  });
+
+  expect(requirePresent(group, 'the group should still be there').id).toBe(ctx.opened.group.id);
+});
+
+test('a transaction may lock two child tasks', async () => {
+  const ctx = await withPlanner();
+  const first = await childTask(ctx.deps, ctx.opened.group.id, ctx.planner.id, 'First child');
+  const second = await childTask(ctx.deps, ctx.opened.group.id, ctx.planner.id, 'Second child');
+
+  const lockedSecond = await ctx.deps.store.transact(async tx => {
+    await tx.lockTask(defaultWorkspaceId, ctx.opened.root.id);
+    await tx.lockTask(defaultWorkspaceId, first);
+
+    return tx.lockTask(defaultWorkspaceId, second);
+  });
+
+  expect(requirePresent(lockedSecond, 'the second child should still be there').id).toBe(second);
+});
+
+test('a transaction that locks the open children after a session is refused', async () => {
+  const ctx = await withPlanner();
+
+  await childTask(ctx.deps, ctx.opened.group.id, ctx.planner.id, 'A child to lock');
+
+  const outOfOrder = ctx.deps.store.transact(async tx => {
+    await tx.lockSession(defaultWorkspaceId, ctx.planner.id);
+    await tx.openChildren(defaultWorkspaceId, ctx.opened.group.id, ctx.opened.root.id);
+  });
+
+  await expect(outOfOrder).rejects.toThrow('Lock order violated: child task locked after session.');
+});
+
+test('a transaction that locks the groups with an outbox after a session is refused', async () => {
+  const ctx = await withPlanner();
+
+  const outOfOrder = ctx.deps.store.transact(async tx => {
+    await tx.lockSession(defaultWorkspaceId, ctx.planner.id);
+    await tx.lockGroupsWithOutbox(new Date(0).toISOString());
+  });
+
+  await expect(outOfOrder).rejects.toThrow('Lock order violated: group locked after session.');
+});
+
+test('a transaction that locks the root after the open children is refused', async () => {
+  const ctx = await withPlanner();
+
+  await childTask(ctx.deps, ctx.opened.group.id, ctx.planner.id, 'A child before the root');
+
+  const outOfOrder = ctx.deps.store.transact(async tx => {
+    await tx.openChildren(defaultWorkspaceId, ctx.opened.group.id, ctx.opened.root.id);
+    await tx.lockTask(defaultWorkspaceId, ctx.opened.root.id);
+  });
+
+  await expect(outOfOrder).rejects.toThrow(
+    'Lock order violated: root task locked after child task.'
+  );
+});
+
+test('failing the root with an open child locks the child before the planner session', async () => {
+  const ctx = await withPlanner();
+  const childId = await childTask(ctx.deps, ctx.opened.group.id, ctx.planner.id, 'Still open');
+  const tasks = await ctx.deps.store.tasks(defaultWorkspaceId, ctx.opened.group.id);
+  const root = requirePresent(
+    tasks.find(task => task.parent_id === null),
+    'the group should have a root task'
+  );
+
+  await reportTransition(ctx.deps, {
+    workspaceId: defaultWorkspaceId,
+    groupId: ctx.opened.group.id,
+    taskId: root.id,
+    expectedVersion: root.version,
+    actor: { kind: 'session', role: 'planner', sessionId: ctx.planner.id, live: true },
+    to: 'failed',
+    note,
+    evidence: [],
+    nextVerificationMode: null,
+  });
+
+  const afterwards = await ctx.deps.store.tasks(defaultWorkspaceId, ctx.opened.group.id);
+  const child = requirePresent(
+    afterwards.find(task => task.id === childId),
+    'the child should still be there'
+  );
+
+  expect(child.state).toBe('failed');
+});
+
 test('a child transition locks the root before the child', async () => {
   const ctx = await withPlanner();
   const taskId = await childTask(ctx.deps, ctx.opened.group.id, ctx.planner.id, 'Close this child');
