@@ -28,6 +28,7 @@ import {
 import { selfHostedGroupCaps } from '@/domain/model.ts';
 import { PlatformError } from '@/domain/platform.ts';
 import { sha256Hex } from '@/domain/secret.ts';
+import { formatTime } from '@/domain/time.ts';
 import type { PlatformAdapter, StartSessionInput } from '@/ports/platform.ts';
 import type { UnitOfWork } from '@/ports/storage.ts';
 import { requirePresent } from '@/testing/assertions.ts';
@@ -1870,8 +1871,30 @@ test('a transaction that locks the group after a session is refused', async () =
   });
 
   await expect(outOfOrder).rejects.toThrow(
-    'Lock order violated: group locked after session. The order is workspace, group, root task, child task, session.'
+    'Lock order violated: group locked after session. The order is lease, workspace, group, root task, child task, session.'
   );
+});
+
+test('a counter repair after a session lock is refused', async () => {
+  const ctx = await withPlanner();
+
+  const outOfOrder = ctx.deps.store.transact(async tx => {
+    await tx.lockSession(defaultWorkspaceId, ctx.planner.id);
+    await tx.correctCounters();
+  });
+
+  await expect(outOfOrder).rejects.toThrow('Lock order violated: workspace locked after session.');
+});
+
+test('a lease write after a session lock is refused', async () => {
+  const ctx = await withPlanner();
+
+  const outOfOrder = ctx.deps.store.transact(async tx => {
+    await tx.lockSession(defaultWorkspaceId, ctx.planner.id);
+    await tx.holdLease('reaper', 1, formatTime(ctx.deps.clock.now()));
+  });
+
+  await expect(outOfOrder).rejects.toThrow('Lock order violated: lease locked after session.');
 });
 
 test('a transaction that locks a child before the root is refused', async () => {

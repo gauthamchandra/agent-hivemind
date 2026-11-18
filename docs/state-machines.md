@@ -268,8 +268,10 @@ end itself only after its task has closed. Beyond itself, a planner may end the 
 started and any member whose task has closed. A reviewer may end the members it started. An
 implementer may end the members it started once their task has closed.
 
-Closing a group does not end its sessions. Members end themselves, or the planner ends them,
-once their tasks are closed.
+Closing a group does not end its sessions in that request. The reaper ends every session of a
+task that has been closed for 60 minutes. It also resolves a `starting` row older than 10
+minutes, and it resumes an end that stopped after the intent was recorded. It does not start a
+session, and it does not end a session whose task is still open.
 
 ### Replacing a session
 

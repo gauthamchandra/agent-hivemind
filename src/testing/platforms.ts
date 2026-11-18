@@ -5,6 +5,9 @@ import type { PlatformAdapter, Platforms } from '@/ports/platform.ts';
 
 export type SimulatedPlatform = ReturnType<typeof createSimulatedPlatform>;
 
+/** The adapter name stored on a connection row. Kept here so core tests do not spell a platform. */
+export const simulatedAdapterName = 'simulated';
+
 type PlatformTestContext = {
   platforms: Platforms;
   connectionId: ConnectionId;

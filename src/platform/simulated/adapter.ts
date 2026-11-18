@@ -36,6 +36,7 @@ export type SimulatedPlatform = {
     result: import('@/domain/platform.ts').SendResult;
   }[];
   setSessionStatus(ref: string, status: string): void;
+  plantSession(key: string): void;
 };
 
 export function createSimulatedPlatform(
@@ -129,6 +130,18 @@ export function createSimulatedPlatform(
       const session = world.sessions.find(item => item.ref === ref);
 
       if (session !== undefined) session.rawStatus = status;
+    },
+    plantSession(key) {
+      world.sessions.push({
+        key,
+        ref: `plat_${key}`,
+        address: `https://platform.example/sessions/${key}`,
+        prompt: '',
+        secret: null,
+        rawStatus: 'working',
+        usageFloor: 0,
+        ended: false,
+      });
     },
   };
 }
