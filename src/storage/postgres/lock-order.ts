@@ -1,6 +1,6 @@
 import type { UnitOfWork } from '@/ports/storage.ts';
 
-const lockOrder = ['lease', 'workspace', 'group', 'root task', 'child task', 'session'] as const;
+const lockOrder = ['job lock', 'workspace', 'group', 'root task', 'child task', 'session'] as const;
 
 type LockLevel = (typeof lockOrder)[number];
 
@@ -12,8 +12,8 @@ type LockLevel = (typeof lockOrder)[number];
  * time, so no test would ever see it. This turns the first out-of-order lock on any path into an
  * error.
  *
- * <p>A supervision job's lease row is the first level. {@code takeLease}, {@code holdLease},
- * {@code insertIntent}, and {@code finishIntent} write that row, so each is checked before it runs.
+ * <p>A background job's lock row is the first level. {@code takeJobLock}, {@code holdJobLock},
+ * {@code insertPlannedAction}, and {@code finishPlannedAction} write that row, so each is checked before it runs.
  *
  * <p>Locking something the transaction already holds is allowed, because it waits for nothing.
  * A lock that finds no row holds nothing, so it does not count.
@@ -70,8 +70,8 @@ export function inLockOrder(work: UnitOfWork): UnitOfWork {
 
   return {
     ...work,
-    ...leaseWrites(work, job => {
-      if (!held.has(`lease:${job}`)) hold(`lease:${job}`, 'lease');
+    ...jobLockWrites(work, job => {
+      if (!held.has(`job_lock:${job}`)) hold(`job_lock:${job}`, 'job lock');
     }),
 
     lockWorkspace(id) {
@@ -143,30 +143,30 @@ export function inLockOrder(work: UnitOfWork): UnitOfWork {
   };
 }
 
-function leaseWrites(
+function jobLockWrites(
   work: UnitOfWork,
-  holdLeaseLock: (job: string) => void
-): Pick<UnitOfWork, 'takeLease' | 'holdLease' | 'insertIntent' | 'finishIntent'> {
+  holdJobLockLevel: (job: string) => void
+): Pick<UnitOfWork, 'takeJobLock' | 'holdJobLock' | 'insertPlannedAction' | 'finishPlannedAction'> {
   return {
-    takeLease(input) {
-      holdLeaseLock(input.job);
+    takeJobLock(input) {
+      holdJobLockLevel(input.job);
 
-      return work.takeLease(input);
+      return work.takeJobLock(input);
     },
-    holdLease(job, epoch, now) {
-      holdLeaseLock(job);
+    holdJobLock(job, lockId, now) {
+      holdJobLockLevel(job);
 
-      return work.holdLease(job, epoch, now);
+      return work.holdJobLock(job, lockId, now);
     },
-    insertIntent(input) {
-      holdLeaseLock(input.job);
+    insertPlannedAction(input) {
+      holdJobLockLevel(input.job);
 
-      return work.insertIntent(input);
+      return work.insertPlannedAction(input);
     },
-    finishIntent(id, job, epoch, now) {
-      holdLeaseLock(job);
+    finishPlannedAction(id, job, lockId, now) {
+      holdJobLockLevel(job);
 
-      return work.finishIntent(id, job, epoch, now);
+      return work.finishPlannedAction(id, job, lockId, now);
     },
   };
 }

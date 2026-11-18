@@ -16,7 +16,8 @@ export type CrashPoint =
   | 'after_reserve'
   | 'after_platform_accept'
   | 'after_end_intent'
-  | 'after_platform_end';
+  | 'after_platform_end'
+  | 'after_planned_action';
 
 /** The process stopped after a committed step. Recovery continues from the row. */
 export class StoppedProcess extends Error {

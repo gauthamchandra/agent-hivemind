@@ -2,15 +2,15 @@ import { expect, test } from 'bun:test';
 import { SQL } from 'bun';
 import type { ServiceDeps } from '@/core/deps.ts';
 import { createFirstAdministrator, openInstallation } from '@/core/installation.ts';
+import { createWorkerId } from '@/core/job-run.ts';
 import { runReaper } from '@/core/reaper.ts';
-import { writeReaperWatch } from '@/core/reaper-actions.ts';
+import { writeReaperJobState } from '@/core/reaper-actions.ts';
 import { endSession } from '@/core/session-end.ts';
 import { openGroup } from '@/core/session-open.ts';
 import { StoppedProcess } from '@/core/session-types.ts';
-import { createWorkerId, SupervisionHalted } from '@/core/supervision-run.ts';
+import { emptySessionJobState, reaperIntervalMs } from '@/domain/background-jobs.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import { createIds, defaultWorkspaceId } from '@/domain/ids.ts';
-import { emptyWatch, reaperIntervalMs } from '@/domain/supervision.ts';
 import { createSimulatedPlatform } from '@/platform/simulated/adapter.ts';
 import type { Platforms } from '@/ports/platform.ts';
 import { systemRandom } from '@/ports/random.ts';
@@ -24,7 +24,7 @@ import { waitUntil } from '@/testing/wait.ts';
 const databaseUrl = process.env.HIVEMIND_POSTGRES_URL;
 
 test.skipIf(databaseUrl === undefined)(
-  'two workers race for the reaper lease and one runs the tick',
+  'two workers race for the reaper job lock and one runs the job',
   async () => {
     const ctx = await boot(databaseUrl ?? '');
     const [first, second] = await Promise.all([
@@ -33,13 +33,13 @@ test.skipIf(databaseUrl === undefined)(
     ]);
 
     expect([first.ran, second.ran].filter(ran => ran)).toHaveLength(1);
-    expect([first.epoch, second.epoch].filter(epoch => epoch !== null)).toEqual([1]);
-    expect([ctx.workerA, ctx.workerB]).toContain(await ctx.holder('reaper'));
+    expect([first.lockId, second.lockId].filter(lockId => lockId !== null)).toEqual([1]);
+    expect([ctx.workerA, ctx.workerB]).toContain(await ctx.lockedBy('reaper'));
   }
 );
 
 test.skipIf(databaseUrl === undefined)(
-  'a stale epoch is rejected and the next worker finishes the open intent',
+  'an old lock id is rejected and the next worker finishes the open planned action',
   async () => {
     const ctx = await boot(databaseUrl ?? '');
 
@@ -53,15 +53,16 @@ test.skipIf(databaseUrl === undefined)(
       })
     ).rejects.toBeInstanceOf(StoppedProcess);
 
-    const halted = await runReaper(ctx.depsA, ctx.platforms, {
+    const stopped = await runReaper(ctx.depsA, ctx.platforms, {
       workerId: ctx.workerA,
-      halt: 'after_intent',
+      crashAt: 'after_planned_action',
     }).catch(caught => caught);
 
-    expect(halted).toBeInstanceOf(SupervisionHalted);
-    if (!(halted instanceof SupervisionHalted)) throw new Error('the holder should stop');
+    expect(stopped).toBeInstanceOf(StoppedProcess);
 
-    expect(await openIntents(ctx.depsA)).toHaveLength(1);
+    const oldLockId = await ctx.lockId('reaper');
+
+    expect(await openPlannedActions(ctx.depsA)).toHaveLength(1);
 
     ctx.clock.advance(reaperIntervalMs);
 
@@ -70,10 +71,14 @@ test.skipIf(databaseUrl === undefined)(
 
     expect(next.ran).toBe(true);
     expect(planner?.life).toBe('ended');
-    expect(await openIntents(ctx.depsB)).toHaveLength(0);
+    expect(await openPlannedActions(ctx.depsB)).toHaveLength(0);
 
     await expect(
-      writeReaperWatch(ctx.depsA, halted.epoch, emptyWatch(ctx.plannerId, defaultWorkspaceId))
+      writeReaperJobState(
+        ctx.depsA,
+        oldLockId,
+        emptySessionJobState(ctx.plannerId, defaultWorkspaceId)
+      )
     ).rejects.toMatchObject({ code: 'conflict' });
   }
 );
@@ -176,8 +181,8 @@ async function boot(url: string) {
     connectionId,
     verificationMode: 'before_merge',
     notes: [],
-    idempotencyKey: 'pg-supervision',
-    bodyHash: 'pg-supervision',
+    idempotencyKey: 'pg-background-jobs',
+    bodyHash: 'pg-background-jobs',
   });
 
   expect(opened.outcome).toBe('live');
@@ -194,11 +199,17 @@ async function boot(url: string) {
     workerB,
     depsA: { ...deps, store: storeA },
     depsB: { ...deps, store: storeB },
-    async holder(job: string) {
-      const rows = await sql.unsafe('SELECT holder FROM leases WHERE job = $1', [job]);
+    async lockId(job: string) {
+      const rows = await sql.unsafe('SELECT lock_id FROM job_locks WHERE job = $1', [job]);
       const row = Array.isArray(rows) ? rows[0] : undefined;
 
-      return typeof row?.holder === 'string' ? row.holder : '';
+      return Number(row?.lock_id ?? 0);
+    },
+    async lockedBy(job: string) {
+      const rows = await sql.unsafe('SELECT locked_by FROM job_locks WHERE job = $1', [job]);
+      const row = Array.isArray(rows) ? rows[0] : undefined;
+
+      return typeof row?.locked_by === 'string' ? row.locked_by : '';
     },
     async blockedQueries() {
       const rows = await sql.unsafe(
@@ -221,6 +232,6 @@ async function boot(url: string) {
   return context;
 }
 
-function openIntents(deps: ServiceDeps) {
-  return deps.store.transact(tx => tx.openIntents('reaper'));
+function openPlannedActions(deps: ServiceDeps) {
+  return deps.store.transact(tx => tx.openPlannedActions('reaper'));
 }

@@ -3,6 +3,9 @@ import { requireConnectionId } from '@/domain/ids.ts';
 import type { Store, UnitOfWork } from '@/ports/storage.ts';
 import { accountWork } from '@/storage/postgres/account-work.ts';
 import { groupWork } from '@/storage/postgres/group-work.ts';
+import { jobHousekeeping } from '@/storage/postgres/job-housekeeping.ts';
+import { jobLocks } from '@/storage/postgres/job-locks.ts';
+import { jobState } from '@/storage/postgres/job-state.ts';
 import { inLockOrder } from '@/storage/postgres/lock-order.ts';
 import { messageWork } from '@/storage/postgres/message-records.ts';
 import { applyMigrations, executePglite } from '@/storage/postgres/migrate.ts';
@@ -21,9 +24,6 @@ import {
   type Sql,
   type SqlDatabase,
 } from '@/storage/postgres/store-query.ts';
-import { supervisionFleet } from '@/storage/postgres/supervision-fleet.ts';
-import { supervisionHousekeeping } from '@/storage/postgres/supervision-housekeeping.ts';
-import { supervisionLease } from '@/storage/postgres/supervision-lease.ts';
 import { taskWork } from '@/storage/postgres/task-work.ts';
 
 export type { Sql, SqlDatabase } from '@/storage/postgres/store-query.ts';
@@ -124,8 +124,8 @@ function unitOfWork(sql: Sql): UnitOfWork {
     ...groupWork(sql),
     ...taskWork(sql),
     ...messageWork(sql),
-    ...supervisionLease(sql),
-    ...supervisionFleet(sql),
-    ...supervisionHousekeeping(sql),
+    ...jobLocks(sql),
+    ...jobState(sql),
+    ...jobHousekeeping(sql),
   });
 }

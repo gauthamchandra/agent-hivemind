@@ -80,7 +80,7 @@ Code is split into layers, and Biome fails the build when a layer imports one it
 | domain            | Types, ids, errors, and the task transition tables with the function that applies them | Nothing else                               |
 | policy            | The permission table: which role may take which action, where                          | domain                                     |
 | ports             | The interfaces the services need: storage and the platform adapter                     | domain                                     |
-| core              | The services, including the reaper that runs from the worker's lease                   | domain, policy, ports                      |
+| core              | The services, including the reaper that runs under the job lock                        | domain, policy, ports                      |
 | storage           | The Postgres store and its migrations                                                  | domain, ports                              |
 | platform adapters | One adapter per agent platform. Only a simulated one exists                            | domain, ports                              |
 | http              | Routes, credential checks, error mapping                                               | domain, ports, core                        |
@@ -248,21 +248,21 @@ One default workspace exists, but every row carries a workspace id. Storage is P
 default the service starts an in-process Postgres that keeps its files in a data directory
 (`.hivemind`, or `HIVEMIND_DATA`). The same SQL and migrations also run on a Postgres server.
 
-| Table                  | Holds                                                                                 |
-| ---------------------- | ------------------------------------------------------------------------------------- |
-| `workspaces`, `people` | The workspace and its limits. People with the role `member` or `administrator`.       |
-| `operator_keys`        | Hashed keys, role, expiry, revocation.                                                |
-| `groups`               | Goal, budget, spend, the caps copied at creation, and the place counters.             |
-| `tasks`                | The root and child tasks, with `version`, `changeset_id` and `changeset_round`.       |
-| `task_events`          | The append-only history, numbered per group by `sequence`.                            |
-| `sessions`             | One row per session: role, `life`, token hash, platform reference, end intent, usage. |
-| `enrollment_codes`     | Hashed codes with expiry, attempts, and use.                                          |
-| `spawn_log`            | One row per start, which the spawn-rate cap counts.                                   |
-| `idempotency_keys`     | Every remembered request and its stored response.                                     |
-| `connections`          | Which adapter the workspace uses.                                                     |
-| `leases`               | One row per job: holder, expiry, and epoch. No workspace column.                      |
-| `job_intents`          | An action a job committed before it called the platform. One open row per target.     |
-| `session_watches`      | What the reaper remembers about one session between runs.                             |
+| Table                  | Holds                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| `workspaces`, `people` | The workspace and its limits. People with the role `member` or `administrator`.                   |
+| `operator_keys`        | Hashed keys, role, expiry, revocation.                                                            |
+| `groups`               | Goal, budget, spend, the caps copied at creation, and the place counters.                         |
+| `tasks`                | The root and child tasks, with `version`, `changeset_id` and `changeset_round`.                   |
+| `task_events`          | The append-only history, numbered per group by `sequence`.                                        |
+| `sessions`             | One row per session: role, `life`, token hash, platform reference, end intent, usage.             |
+| `enrollment_codes`     | Hashed codes with expiry, attempts, and use.                                                      |
+| `spawn_log`            | One row per start, which the spawn-rate cap counts.                                               |
+| `idempotency_keys`     | Every remembered request and its stored response.                                                 |
+| `connections`          | Which adapter the workspace uses.                                                                 |
+| `job_locks`            | One row per background job: who holds the lock, its expiry, and its lock id. No workspace column. |
+| `planned_actions`      | An action a job recorded before it called the platform. One open row per target.                  |
+| `session_job_state`    | What the reaper remembers about one session between runs.                                         |
 
 The database enforces what code must never break:
 
@@ -289,8 +289,8 @@ change in the same transaction that inserts, ends, or releases a session. Two ov
 starts therefore cannot both take the last place. A CI job runs two clients against a Postgres
 server, competing for the last place, to prove it.
 
-A transaction that locks more than one of these takes the locks in one order: a supervision
-job's lease row, workspace, group, root task, child task, session. A different order is how two
+A transaction that locks more than one of these takes the locks in one order: a background
+job's lock row, workspace, group, root task, child task, session. A different order is how two
 requests deadlock.
 
 The store refuses a lock that comes after a later one in this list, so a path that breaks the

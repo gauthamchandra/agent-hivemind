@@ -1,12 +1,12 @@
 import { PGlite } from '@electric-sql/pglite';
+import { runDueJobs } from '@/core/background-jobs.ts';
 import { drainOutbox } from '@/core/delivery.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
 import { openInstallation } from '@/core/installation.ts';
-import { runDueJobs } from '@/core/supervision.ts';
-import { createWorkerId } from '@/core/supervision-run.ts';
+import { createWorkerId } from '@/core/job-run.ts';
+import { jobLockCheckMs } from '@/domain/background-jobs.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import { type ConnectionId, createIds, defaultWorkspaceId } from '@/domain/ids.ts';
-import { leaseRenewMs } from '@/domain/supervision.ts';
 import { formatTime } from '@/domain/time.ts';
 import { startHttp } from '@/http/server.ts';
 import { createSimulatedPlatform } from '@/platform/simulated/adapter.ts';
@@ -61,20 +61,20 @@ export async function startHivemind(options?: {
   });
   const workerId = createWorkerId(systemRandom.bytes(8));
   let draining = false;
-  let supervising = false;
+  let backgroundJobsRunning = false;
   let activeDrain: Promise<void> = Promise.resolve();
-  let activeSupervision: Promise<void> = Promise.resolve();
-  const runSupervision = () => {
-    if (supervising) return;
+  let activeBackgroundJobs: Promise<void> = Promise.resolve();
+  const runBackgroundJobs = () => {
+    if (backgroundJobsRunning) return;
 
-    supervising = true;
-    activeSupervision = runDueJobs(deps, platforms, { workerId })
+    backgroundJobsRunning = true;
+    activeBackgroundJobs = runDueJobs(deps, platforms, { workerId })
       .then(() => undefined)
       .catch(error => {
-        console.error('Supervision tick failed. The job runs again after its interval.', error);
+        console.error('Background jobs failed. Each job runs again after its interval.', error);
       })
       .finally(() => {
-        supervising = false;
+        backgroundJobsRunning = false;
       });
   };
   const timer = setInterval(() => {
@@ -89,9 +89,9 @@ export async function startHivemind(options?: {
         });
     }
   }, 1000);
-  const supervision = setInterval(runSupervision, leaseRenewMs);
+  const backgroundJobsTimer = setInterval(runBackgroundJobs, jobLockCheckMs);
 
-  runSupervision();
+  runBackgroundJobs();
 
   return {
     url: server.url,
@@ -99,9 +99,9 @@ export async function startHivemind(options?: {
     bootstrapSecret: installation.bootstrapSecret,
     async stop() {
       clearInterval(timer);
-      clearInterval(supervision);
+      clearInterval(backgroundJobsTimer);
       await activeDrain;
-      await activeSupervision;
+      await activeBackgroundJobs;
       server.stop();
       await database.close();
     },

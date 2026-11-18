@@ -1871,7 +1871,7 @@ test('a transaction that locks the group after a session is refused', async () =
   });
 
   await expect(outOfOrder).rejects.toThrow(
-    'Lock order violated: group locked after session. The order is lease, workspace, group, root task, child task, session.'
+    'Lock order violated: group locked after session. The order is job lock, workspace, group, root task, child task, session.'
   );
 });
 
@@ -1886,15 +1886,15 @@ test('a counter repair after a session lock is refused', async () => {
   await expect(outOfOrder).rejects.toThrow('Lock order violated: workspace locked after session.');
 });
 
-test('a lease write after a session lock is refused', async () => {
+test('a job lock write after a session lock is refused', async () => {
   const ctx = await withPlanner();
 
   const outOfOrder = ctx.deps.store.transact(async tx => {
     await tx.lockSession(defaultWorkspaceId, ctx.planner.id);
-    await tx.holdLease('reaper', 1, formatTime(ctx.deps.clock.now()));
+    await tx.holdJobLock('reaper', 1, formatTime(ctx.deps.clock.now()));
   });
 
-  await expect(outOfOrder).rejects.toThrow('Lock order violated: lease locked after session.');
+  await expect(outOfOrder).rejects.toThrow('Lock order violated: job lock locked after session.');
 });
 
 test('a transaction that locks a child before the root is refused', async () => {
