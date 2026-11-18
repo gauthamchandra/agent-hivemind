@@ -3,6 +3,7 @@ import { knownQuestion } from '@/core/message-limits.ts';
 import { namedRecipient } from '@/core/message-recipients.ts';
 import { requireRoot } from '@/core/record-checks.ts';
 import type { SendInput } from '@/core/send-message.ts';
+import { lockTasksBeforeSession } from '@/core/session-lock.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { GroupId, MessageId, SessionId, WorkspaceId } from '@/domain/ids.ts';
 import { requireWaitId } from '@/domain/ids.ts';
@@ -94,6 +95,8 @@ export async function recordWait(
     if (group === null) {
       throw new HivemindError('not_found', 'No group with that identifier is in this workspace.');
     }
+
+    await lockTasksBeforeSession(tx, peeked);
 
     const session = await tx.lockSession(input.workspaceId, input.sessionId);
 

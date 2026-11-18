@@ -988,6 +988,30 @@ test('a send locks the group before either session', async () => {
   expect(order?.indexOf('group')).toBeLessThan(order?.indexOf('session') ?? -1);
 });
 
+test('a send locks the sender tasks before the sender session', async () => {
+  const ctx = await team();
+  const orders = watchTransactions(ctx.deps.store);
+
+  await sendNote(ctx, ctx.implementer, ctx.planner, 'Lock the tasks first.', 'task-lock-order');
+
+  expect(tasksLockedBeforeTheFirstSession(orders)).toBeGreaterThanOrEqual(2);
+});
+
+test('a recorded wait locks the sender tasks before the sender session', async () => {
+  const ctx = await team();
+  const orders = watchTransactions(ctx.deps.store);
+
+  await recordWait(ctx.deps, {
+    workspaceId: defaultWorkspaceId,
+    sessionId: ctx.implementer.id,
+    awaitedId: ctx.planner.id,
+    seconds: 60,
+    questionId: null,
+  });
+
+  expect(tasksLockedBeforeTheFirstSession(orders)).toBeGreaterThanOrEqual(2);
+});
+
 test('a drop locks the group before the recipient and the event', async () => {
   const ctx = await team();
 
@@ -1286,6 +1310,15 @@ function call(
   return method.apply(target, args);
 }
 
+function tasksLockedBeforeTheFirstSession(orders: string[][]): number {
+  const order = requirePresent(
+    orders.find(item => item.includes('session')),
+    'the transaction should lock a session'
+  );
+
+  return order.slice(0, order.indexOf('session')).filter(name => name === 'task').length;
+}
+
 function watchTransactions(store: Service['deps']['store']): string[][] {
   const orders: string[][] = [];
   const transact = store.transact.bind(store);
@@ -1308,6 +1341,7 @@ function watchSendLocks(tx: UnitOfWork, order: string[]): UnitOfWork {
       if (
         prop !== 'lockWorkspace' &&
         prop !== 'lockGroup' &&
+        prop !== 'lockTask' &&
         prop !== 'lockSession' &&
         prop !== 'nextSequence'
       ) {
@@ -1329,9 +1363,12 @@ function watchSendLocks(tx: UnitOfWork, order: string[]): UnitOfWork {
   });
 }
 
-function lockName(prop: 'lockWorkspace' | 'lockGroup' | 'lockSession' | 'nextSequence'): string {
+function lockName(
+  prop: 'lockWorkspace' | 'lockGroup' | 'lockTask' | 'lockSession' | 'nextSequence'
+): string {
   if (prop === 'lockWorkspace') return 'workspace';
   if (prop === 'lockGroup') return 'group';
+  if (prop === 'lockTask') return 'task';
   if (prop === 'lockSession') return 'session';
 
   return 'sequence';
