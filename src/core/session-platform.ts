@@ -22,6 +22,16 @@ export async function endOnPlatform(
 
     throw error;
   }
+
+  await deps.store.transact(async tx => {
+    const locked = await tx.lockSession(session.workspace_id, session.id);
+
+    if (locked === null || !locked.platform_stop_pending) return;
+
+    locked.platform_stop_pending = false;
+    await tx.updateSession(locked);
+  });
+  session.platform_stop_pending = false;
 }
 
 /**

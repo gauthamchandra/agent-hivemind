@@ -140,6 +140,7 @@ async function insertStartingSession(
     end_reason: null,
     end_operation_id: null,
     final_usage_pending: false,
+    platform_stop_pending: false,
     last_status: null,
     usage: null,
     attributed_to: null,

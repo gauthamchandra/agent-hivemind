@@ -23,7 +23,10 @@ export async function reclaimCompensatedStart(
 ): Promise<SessionRecord> {
   if (session.life !== 'start_failed') return session;
 
-  if (session.platform_session_ref !== null && session.final_usage_pending) {
+  if (
+    session.platform_session_ref !== null &&
+    (session.final_usage_pending || session.platform_stop_pending)
+  ) {
     return stopCompensatedPlatform(deps, platforms, session);
   }
 
@@ -49,14 +52,38 @@ export async function reclaimCompensatedStart(
     locked.platform_session_ref = found.platformSessionRef;
     locked.platform_address = found.address;
     locked.final_usage_pending = true;
+    locked.platform_stop_pending = true;
     await tx.updateSession(locked);
 
     return locked;
   });
 
-  if (attached.platform_session_ref === null || !attached.final_usage_pending) return attached;
+  if (
+    attached.platform_session_ref === null ||
+    (!attached.final_usage_pending && !attached.platform_stop_pending)
+  ) {
+    return attached;
+  }
 
   return stopCompensatedPlatform(deps, platforms, attached);
+}
+
+/** Add only the increase. A later smaller reading does not reduce spend or the stored usage. */
+export function applyReading(
+  group: { spend: string },
+  session: { usage: string | null },
+  reading: number
+): boolean {
+  const next = decimalFromNumber(reading);
+  const previous = session.usage === null ? '0' : canonicalizeDecimal(session.usage);
+  const increase = subtractDecimal(next, previous);
+  const grew = compareDecimal(increase, '0') > 0;
+
+  if (grew) group.spend = addDecimal(group.spend, increase);
+
+  session.usage = compareDecimal(next, previous) > 0 ? next : previous;
+
+  return grew;
 }
 
 /** Stop a platform session that appeared after recovery had already given its place back. */
@@ -65,16 +92,14 @@ export async function stopCompensatedPlatform(
   platforms: Platforms,
   session: SessionRecord
 ): Promise<SessionRecord> {
-  if (
-    session.life !== 'start_failed' ||
-    session.platform_session_ref === null ||
-    !session.final_usage_pending
-  ) {
-    return session;
+  if (session.life !== 'start_failed' || session.platform_session_ref === null) return session;
+  if (!session.platform_stop_pending && !session.final_usage_pending) return session;
+
+  if (session.platform_stop_pending) {
+    await endOnPlatform(deps, platforms, session, session.platform_session_ref);
   }
 
-  await endOnPlatform(deps, platforms, session, session.platform_session_ref);
-  await readFinalUsage(deps, platforms, session);
+  if (session.final_usage_pending) await readFinalUsage(deps, platforms, session);
 
   return (await deps.store.session(session.workspace_id, session.id)) ?? session;
 }
@@ -105,16 +130,7 @@ export async function readFinalUsage(
 
       if (locked === null || groupRow === null) return;
 
-      const next = decimalFromNumber(reading);
-      const previous = locked.usage === null ? '0' : canonicalizeDecimal(locked.usage);
-      const increase = subtractDecimal(next, previous);
-
-      if (compareDecimal(increase, '0') > 0) {
-        groupRow.spend = addDecimal(groupRow.spend, increase);
-        await tx.updateGroup(groupRow);
-      }
-
-      locked.usage = compareDecimal(next, previous) > 0 ? next : previous;
+      if (applyReading(groupRow, locked, reading)) await tx.updateGroup(groupRow);
       locked.final_usage_pending = false;
       await tx.updateSession(locked);
     });

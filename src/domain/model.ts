@@ -253,6 +253,7 @@ export type SessionRecord = {
   end_reason: string | null;
   end_operation_id: string | null;
   final_usage_pending: boolean;
+  platform_stop_pending: boolean;
   last_status: NeutralStatus | null;
   usage: string | null;
   attributed_to: 'owner' | 'service' | null;

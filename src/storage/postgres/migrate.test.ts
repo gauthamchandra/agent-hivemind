@@ -73,6 +73,64 @@ async function expectAppliedOnce(execute: (db: PGlite) => ExecuteSql): Promise<v
   expect(spawn.rows).toHaveLength(1);
 }
 
+test('an unfinished stop stays pending when the column is added', async () => {
+  const db = await openEmptyDatabase();
+  const directory = fileURLToPath(new URL('./migrations/', import.meta.url));
+  const files = (await readdir(directory)).filter(name => name.endsWith('.sql')).sort();
+
+  for (const name of files) {
+    if (name === '009_platform_stop_pending.sql') continue;
+
+    await db.exec(await readFile(join(directory, name), 'utf8'));
+  }
+
+  await db.exec(
+    `INSERT INTO workspaces (id, name, status, limits, created_at)
+     VALUES ('ws_default', 'Local', 'active', '{}', '2026-01-01T00:00:00Z');
+     INSERT INTO people (id, workspace_id, display_name, workspace_role, account_id, status, created_at)
+     VALUES ('per_01', 'ws_default', 'Ada', 'administrator', NULL, 'active', '2026-01-01T00:00:00Z');
+     INSERT INTO groups (
+       id, workspace_id, name, goal, owner_person_id, default_verification_mode, connection_id,
+       budget, spend, caps, session_settings, context_fingerprint, features, status, created_at
+     ) VALUES (
+       'grp_01', 'ws_default', 'Checkout', 'Ship it.', 'per_01', 'before_merge', 'con_01',
+       10, 0, '{}', '{}', 'fp', '{}', 'open', '2026-01-01T00:00:00Z'
+     );
+     INSERT INTO tasks (
+       id, workspace_id, group_id, parent_id, title, description, state, state_entered_at,
+       verification_mode, depends_on, changeset_round, respawns_used, created_by_kind, created_by_id,
+       created_at, version
+     ) VALUES (
+       'tsk_01', 'ws_default', 'grp_01', NULL, 'Root', 'The root task.', 'implementing',
+       '2026-01-01T00:00:00Z', 'before_merge', '[]', 1, 0, 'person', 'per_01',
+       '2026-01-01T00:00:00Z', 1
+     );
+     INSERT INTO sessions (
+       id, workspace_id, group_id, task_id, role, attempt, title, life, start_attempt_id,
+       platform_session_ref, final_usage_pending, created_at
+     ) VALUES
+       ('ses_stop', 'ws_default', 'grp_01', 'tsk_01', 'planner', 1, 'Pending stop', 'ended',
+        'attempt-stop', 'plat_stop', true, '2026-01-01T00:00:00Z'),
+       ('ses_failed', 'ws_default', 'grp_01', 'tsk_01', 'implementer', 1, 'Failed start',
+        'start_failed', 'attempt-failed', 'plat_failed', true, '2026-01-01T00:00:01Z'),
+       ('ses_clear', 'ws_default', 'grp_01', 'tsk_01', 'reviewer', 1, 'Already clear', 'ended',
+        'attempt-clear', 'plat_clear', false, '2026-01-01T00:00:02Z'),
+       ('ses_noref', 'ws_default', 'grp_01', 'tsk_01', 'verifier', 1, 'No reference', 'ended',
+        'attempt-noref', NULL, true, '2026-01-01T00:00:03Z');`
+  );
+  await db.exec(await readFile(join(directory, '009_platform_stop_pending.sql'), 'utf8'));
+
+  const rows = await db.query<{ id: string; platform_stop_pending: boolean }>(
+    'SELECT id, platform_stop_pending FROM sessions ORDER BY id'
+  );
+  const pending = Object.fromEntries(rows.rows.map(row => [row.id, row.platform_stop_pending]));
+
+  expect(pending.ses_stop).toBe(true);
+  expect(pending.ses_failed).toBe(true);
+  expect(pending.ses_clear).toBe(false);
+  expect(pending.ses_noref).toBe(false);
+});
+
 test('a timestamp column is named with _at or _until', async () => {
   const directory = fileURLToPath(new URL('./migrations/', import.meta.url));
   const files = (await readdir(directory)).filter(name => name.endsWith('.sql'));

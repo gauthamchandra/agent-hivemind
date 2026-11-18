@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted on 17 November 2026. Not built: the service reads usage only when a session ends.
+Accepted on 17 November 2026. The poll is built. It runs on the worker lease described in [ADR 0007](0007-the-worker-lease-runs-supervision.md). The two follow-ups below, ending agents for context rot and ending agents that have passed the budget, are still open.
 
 ## Why do this
 

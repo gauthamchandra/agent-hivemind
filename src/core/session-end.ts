@@ -76,10 +76,14 @@ export async function settleEndedPlatform(
       ? await attachPlatformRef(deps, platforms, session)
       : session;
 
-  if (current.platform_session_ref === null || !current.final_usage_pending) return current;
+  if (current.platform_session_ref === null) return current;
+  if (!current.platform_stop_pending && !current.final_usage_pending) return current;
 
-  await endOnPlatform(deps, platforms, current, current.platform_session_ref);
-  await readFinalUsage(deps, platforms, current);
+  if (current.platform_stop_pending) {
+    await endOnPlatform(deps, platforms, current, current.platform_session_ref);
+  }
+
+  if (current.final_usage_pending) await readFinalUsage(deps, platforms, current);
 
   return (await deps.store.session(current.workspace_id, current.id)) ?? current;
 }

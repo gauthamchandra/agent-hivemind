@@ -22,12 +22,12 @@ export function rowWork(
            id, workspace_id, group_id, task_id, role, attempt, parent_session_id,
            platform_session_ref, platform_address, title, life, token_hash, enrolled_at, enrolled_by,
            last_report_at, start_attempt_id, existence_evidence_at, end_requested_at, end_actor_kind,
-           end_actor_id, end_reason, end_operation_id, final_usage_pending, last_status, usage,
-           attributed_to, secret_delivered, created_at, ended_at
+           end_actor_id, end_reason, end_operation_id, final_usage_pending, platform_stop_pending,
+           last_status, usage, attributed_to, secret_delivered, created_at, ended_at
          ) VALUES (
            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::timestamptz, $14,
            $15::timestamptz, $16, $17::timestamptz, $18::timestamptz, $19, $20, $21, $22, $23, $24,
-           $25::numeric, $26, $27, $28::timestamptz, $29::timestamptz
+           $25, $26::numeric, $27, $28, $29::timestamptz, $30::timestamptz
          )`,
         sessionParams(session)
       );
@@ -49,11 +49,12 @@ export function rowWork(
            end_reason = $14,
            end_operation_id = $15,
            final_usage_pending = $16,
-           last_status = $17,
-           usage = $18::numeric,
-           attributed_to = $19,
-           secret_delivered = $20,
-           ended_at = $21::timestamptz
+           platform_stop_pending = $17,
+           last_status = $18,
+           usage = $19::numeric,
+           attributed_to = $20,
+           secret_delivered = $21,
+           ended_at = $22::timestamptz
          WHERE workspace_id = $1 AND id = $2`,
         [
           session.workspace_id,
@@ -72,6 +73,7 @@ export function rowWork(
           session.end_reason,
           session.end_operation_id,
           session.final_usage_pending,
+          session.platform_stop_pending,
           session.last_status,
           session.usage,
           session.attributed_to,

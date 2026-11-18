@@ -2,12 +2,17 @@ import { PGlite } from '@electric-sql/pglite';
 import { drainOutbox } from '@/core/delivery.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
 import { openInstallation } from '@/core/installation.ts';
+import { runDueJobs } from '@/core/supervision.ts';
+import { createWorkerId } from '@/core/supervision-run.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import { type ConnectionId, createIds, defaultWorkspaceId } from '@/domain/ids.ts';
+import { leaseRenewMs } from '@/domain/supervision.ts';
 import { formatTime } from '@/domain/time.ts';
 import { startHttp } from '@/http/server.ts';
+import { createWebhookNotifier } from '@/notify/webhook.ts';
 import { createSimulatedPlatform } from '@/platform/simulated/adapter.ts';
 import { systemClock } from '@/ports/clock.ts';
+import type { Notifier } from '@/ports/notifier.ts';
 import type { Platforms } from '@/ports/platform.ts';
 import { systemRandom } from '@/ports/random.ts';
 import { openPgliteStore } from '@/storage/postgres/store.ts';
@@ -56,20 +61,40 @@ export async function startHivemind(options?: {
     connectionId,
     ...(options?.port === undefined ? {} : { port: options.port }),
   });
+  const notifier = webhookFromEnv();
+  const workerId = createWorkerId(systemRandom.bytes(8));
   let draining = false;
+  let supervising = false;
   let activeDrain: Promise<void> = Promise.resolve();
-  const timer = setInterval(() => {
-    if (draining) return;
+  let activeSupervision: Promise<void> = Promise.resolve();
+  const runSupervision = () => {
+    if (supervising) return;
 
-    draining = true;
-    activeDrain = drainOutbox(deps, platforms, { workerId: 'hivemind-svc' })
-      .catch(() => {
-        console.error('Delivery will retry on the next tick.');
+    supervising = true;
+    activeSupervision = runDueJobs(deps, platforms, notifier, { workerId })
+      .then(() => undefined)
+      .catch(error => {
+        console.error('Supervision tick failed. The job runs again after its interval.', error);
       })
       .finally(() => {
-        draining = false;
+        supervising = false;
       });
+  };
+  const timer = setInterval(() => {
+    if (!draining) {
+      draining = true;
+      activeDrain = drainOutbox(deps, platforms, { workerId })
+        .catch(() => {
+          console.error('Delivery will retry on the next tick.');
+        })
+        .finally(() => {
+          draining = false;
+        });
+    }
   }, 1000);
+  const supervision = setInterval(runSupervision, leaseRenewMs);
+
+  runSupervision();
 
   return {
     url: server.url,
@@ -77,11 +102,27 @@ export async function startHivemind(options?: {
     bootstrapSecret: installation.bootstrapSecret,
     async stop() {
       clearInterval(timer);
+      clearInterval(supervision);
       await activeDrain;
+      await activeSupervision;
       server.stop();
       await database.close();
     },
   };
+}
+
+function webhookFromEnv(): Notifier | null {
+  const url = process.env.HIVEMIND_WEBHOOK_URL;
+
+  if (url === undefined || url.length === 0) return null;
+
+  const secret = process.env.HIVEMIND_WEBHOOK_SECRET;
+
+  if (secret === undefined || secret.length === 0) {
+    throw new HivemindError('unavailable', 'HIVEMIND_WEBHOOK_SECRET is not set.');
+  }
+
+  return createWebhookNotifier({ url, secret });
 }
 
 function configuredResponseKey(given: string | undefined): string {

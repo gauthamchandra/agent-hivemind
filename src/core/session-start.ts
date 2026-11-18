@@ -61,7 +61,7 @@ export async function startSession(
     if (session.life !== 'live') {
       if (
         session.life === 'start_failed' &&
-        session.final_usage_pending &&
+        (session.final_usage_pending || session.platform_stop_pending) &&
         session.platform_session_ref !== null
       ) {
         await stopCompensatedPlatform(deps, platforms, session);
@@ -176,7 +176,7 @@ export async function recoverStart(
 
   if (
     completed.life === 'start_failed' &&
-    completed.final_usage_pending &&
+    (completed.final_usage_pending || completed.platform_stop_pending) &&
     completed.platform_session_ref !== null
   ) {
     return stopCompensatedPlatform(deps, platforms, completed);
@@ -205,7 +205,10 @@ async function completeStart(
       session.platform_session_ref = result.platformSessionRef;
       session.platform_address = result.address;
 
-      if (session.life === 'ended') session.final_usage_pending = true;
+      if (session.life === 'ended') {
+        session.final_usage_pending = true;
+        session.platform_stop_pending = true;
+      }
 
       await tx.updateSession(session);
     }
@@ -218,6 +221,7 @@ async function completeStart(
       session.platform_session_ref = result.platformSessionRef;
       session.platform_address = result.address;
       session.final_usage_pending = true;
+      session.platform_stop_pending = true;
       await tx.updateSession(session);
     }
 

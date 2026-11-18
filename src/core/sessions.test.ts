@@ -691,7 +691,7 @@ test('a tiny usage reading is stored', async () => {
   expect(group?.spend).toBe('0.0000001');
 });
 
-test('a second end stops before it records pending usage', async () => {
+test('a second end records the usage a finished stop missed', async () => {
   const ctx = await withPlanner();
 
   ctx.simulated.controls.setReportedUsage(4);
@@ -720,7 +720,7 @@ test('a second end stops before it records pending usage', async () => {
   expect(again.final_usage_pending).toBe(false);
   expect(again.usage).toBe('4');
   expect(group?.spend).toBe('4');
-  expect(ctx.simulated.calls().filter(call => call === 'end')).toHaveLength(ends + 1);
+  expect(ctx.simulated.calls().filter(call => call === 'end')).toHaveLength(ends);
 });
 
 test('an end stops a reference attached while find is in flight', async () => {

@@ -1,3 +1,4 @@
+import { escalateSession } from '@/core/escalate.ts';
 import { endSession } from '@/core/session-end.ts';
 import { releaseSession, resumeSession } from '@/core/session-release.ts';
 import { HivemindError } from '@/domain/errors.ts';
@@ -53,6 +54,16 @@ export async function selfRoute(
         })
       ),
     });
+  }
+
+  if (request.method === 'POST' && path === '/v1/session/escalate') {
+    const finding = await escalateSession(deps, {
+      workspaceId: active.workspace_id,
+      sessionId: active.id,
+      reason: readString(body, 'reason'),
+    });
+
+    return json(200, { finding });
   }
 
   if (request.method === 'POST' && path === '/v1/session/end') {
