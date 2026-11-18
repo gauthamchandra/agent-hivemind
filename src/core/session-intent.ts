@@ -81,7 +81,10 @@ export async function attachPlatformRef(
       locked.platform_session_ref = found.platformSessionRef;
       locked.platform_address = found.address;
 
-      if (locked.life === 'ended') locked.final_usage_pending = true;
+      if (locked.life === 'ended') {
+        locked.final_usage_pending = true;
+        locked.platform_stop_pending = true;
+      }
 
       await tx.updateSession(locked);
     }

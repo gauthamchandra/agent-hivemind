@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { readFile } from 'node:fs/promises';
 import type { PGlite } from '@electric-sql/pglite';
 import type { ServiceDeps } from '@/core/deps.ts';
 import {
@@ -691,7 +692,7 @@ test('a tiny usage reading is stored', async () => {
   expect(group?.spend).toBe('0.0000001');
 });
 
-test('a second end stops before it records pending usage', async () => {
+test('a second end records the usage a finished stop missed', async () => {
   const ctx = await withPlanner();
 
   ctx.simulated.controls.setReportedUsage(4);
@@ -708,6 +709,7 @@ test('a second end stops before it records pending usage', async () => {
 
   expect(pending?.life).toBe('ended');
   expect(pending?.final_usage_pending).toBe(true);
+  expect(pending?.platform_stop_pending).toBe(false);
 
   const again = await endSession(ctx.deps, ctx.platforms, {
     workspaceId: defaultWorkspaceId,
@@ -720,7 +722,47 @@ test('a second end stops before it records pending usage', async () => {
   expect(again.final_usage_pending).toBe(false);
   expect(again.usage).toBe('4');
   expect(group?.spend).toBe('4');
+  expect(ctx.simulated.calls().filter(call => call === 'end')).toHaveLength(ends);
+});
+
+test('a session that owed a stop before the flag existed retries it after the backfill', async () => {
+  const ctx = await withPlanner();
+  const end = {
+    workspaceId: defaultWorkspaceId,
+    sessionId: ctx.planner.id,
+    actor: { kind: 'session' as const, sessionId: ctx.planner.id },
+    reason: 'Finish what the old flag owed.',
+  };
+  const backfill = await readFile(
+    new URL(
+      '../storage/postgres/migrations/009_backfill_platform_stop_pending.sql',
+      import.meta.url
+    ),
+    'utf8'
+  );
+
+  await endSession(ctx.deps, ctx.platforms, end);
+  await ctx.db.exec(backfill);
+
+  const settledBefore = await ctx.deps.store.session(defaultWorkspaceId, ctx.planner.id);
+
+  expect(settledBefore?.platform_stop_pending).toBe(false);
+
+  await ctx.db.query('UPDATE sessions SET final_usage_pending = true WHERE id = $1', [
+    ctx.planner.id,
+  ]);
+  await ctx.db.exec(backfill);
+
+  const legacy = await ctx.deps.store.session(defaultWorkspaceId, ctx.planner.id);
+  const ends = ctx.simulated.calls().filter(call => call === 'end').length;
+
+  expect(legacy?.platform_stop_pending).toBe(true);
+
+  const retried = await endSession(ctx.deps, ctx.platforms, end);
+
   expect(ctx.simulated.calls().filter(call => call === 'end')).toHaveLength(ends + 1);
+  expect(retried.platform_stop_pending).toBe(false);
+  expect(retried.final_usage_pending).toBe(false);
 });
 
 test('an end stops a reference attached while find is in flight', async () => {
@@ -760,6 +802,60 @@ test('an end stops a reference attached while find is in flight', async () => {
   await ending;
 
   expect(found.ended).toContain('plat_late');
+});
+
+test('a failed stop of a reference attached while find is in flight stays retryable', async () => {
+  const ctx = await withPlanner();
+  const taskId = await childTask(ctx.deps, ctx.opened.group.id, ctx.planner.id, 'Late stop retry');
+  const found = holdFind(ctx, { failEnds: 1 });
+
+  await expect(
+    startSession(ctx.deps, ctx.platforms, {
+      workspaceId: defaultWorkspaceId,
+      groupId: ctx.opened.group.id,
+      taskId,
+      role: 'implementer',
+      instructions: 'Write the change.',
+      actor: { kind: 'session', sessionId: ctx.planner.id },
+      idempotencyKey: 'late-ref-retry',
+      bodyHash: 'late-ref-retry',
+      replacementOf: null,
+      crashAt: 'after_reserve',
+    })
+  ).rejects.toBeInstanceOf(StoppedProcess);
+
+  const reserved = await waitForRole(ctx.deps, ctx.opened.group.id, 'implementer');
+  const ending = endSession(ctx.deps, ctx.platforms, {
+    workspaceId: defaultWorkspaceId,
+    sessionId: reserved.id,
+    actor: { kind: 'session', sessionId: ctx.planner.id },
+    reason: 'Stop while the platform is still unknown.',
+  });
+  const failure = ending.catch((error: unknown) => error);
+
+  await found.entered;
+  await ctx.db.query('UPDATE sessions SET platform_session_ref = $1 WHERE id = $2', [
+    'plat_late',
+    reserved.id,
+  ]);
+  found.release();
+
+  expect(await failure).toMatchObject({ code: 'unavailable' });
+
+  const stuck = await ctx.deps.store.session(defaultWorkspaceId, reserved.id);
+
+  expect(stuck?.life).toBe('ended');
+  expect(stuck?.platform_stop_pending).toBe(true);
+
+  await resumeEnd(ctx.deps, ctx.platforms, {
+    workspaceId: defaultWorkspaceId,
+    sessionId: reserved.id,
+  });
+
+  const settled = await ctx.deps.store.session(defaultWorkspaceId, reserved.id);
+
+  expect(found.ended).toEqual(['plat_late', 'plat_late']);
+  expect(settled?.platform_stop_pending).toBe(false);
 });
 
 test('a repeated release and resume keep the same place count', async () => {
@@ -1012,6 +1108,7 @@ test('a replay of a failed start stops the platform session that is still runnin
     message: 'The platform did not stop the session.',
   });
 
+  const stuck = await ctx.deps.store.session(defaultWorkspaceId, reserved.id);
   const replay = await startSession(ctx.deps, ctx.platforms, input);
   const settled = await ctx.deps.store.session(defaultWorkspaceId, reserved.id);
   const status = await ctx.simulated.adapter.readStatus(
@@ -1019,9 +1116,11 @@ test('a replay of a failed start stops the platform session that is still runnin
     platformRefOf(settled)
   );
 
+  expect(stuck?.platform_stop_pending).toBe(true);
   expect(replay.outcome).toBe('refused');
   expect(settled?.life).toBe('start_failed');
   expect(settled?.final_usage_pending).toBe(false);
+  expect(settled?.platform_stop_pending).toBe(false);
   expect(status.status).toBe('stopped');
 });
 
@@ -2708,7 +2807,10 @@ function platformRefOf(
   );
 }
 
-function holdFind(ctx: Service): {
+function holdFind(
+  ctx: Service,
+  options?: { failEnds: number }
+): {
   entered: Promise<void>;
   release: () => void;
   ended: string[];
@@ -2722,6 +2824,7 @@ function holdFind(ctx: Service): {
     markEntered = resolve;
   });
   const ended: string[] = [];
+  let failEnds = options?.failEnds ?? 0;
   const real = ctx.simulated.adapter;
   const adapter: PlatformAdapter = {
     ...real,
@@ -2733,6 +2836,12 @@ function holdFind(ctx: Service): {
     },
     async end(connection, ref) {
       ended.push(ref);
+
+      if (failEnds > 0) {
+        failEnds -= 1;
+
+        throw new PlatformError('unavailable', 'The platform did not answer.');
+      }
 
       return real.end(connection, ref);
     },
