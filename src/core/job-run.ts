@@ -11,10 +11,7 @@ export type RunOptions = {
   crashAt?: 'after_planned_action';
 };
 
-export type JobRunResult = {
-  ran: boolean;
-  lockId: number | null;
-};
+export type JobRunResult = { ran: true; lockId: number } | { ran: false; lockId: null };
 
 /** A different string for each process, stored as `job_locks.locked_by`. */
 export function createWorkerId(bytes: Uint8Array): string {

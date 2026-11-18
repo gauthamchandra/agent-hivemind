@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { recordPlannedAction, takeJob } from '@/core/job-run.ts';
+import { type JobRunResult, recordPlannedAction, takeJob } from '@/core/job-run.ts';
 import { jobLockCheckMs, jobLockMs } from '@/domain/background-jobs.ts';
 import { defaultWorkspaceId } from '@/domain/ids.ts';
 import { formatTime } from '@/domain/time.ts';
@@ -91,6 +91,18 @@ test('a planned action from an old lock id is refused', async () => {
     )
   ).rejects.toMatchObject({ code: 'conflict' });
   expect(await deps.store.transact(tx => tx.openPlannedActions('reaper'))).toHaveLength(0);
+});
+
+test('a job run that ran always carries its lock id and one that did not carries none', () => {
+  const ran: JobRunResult = { ran: true, lockId: 3 };
+  const skipped: JobRunResult = { ran: false, lockId: null };
+  // @ts-expect-error a run that ran must say which lock id it ran under
+  const ranWithoutLockId: JobRunResult = { ran: true, lockId: null };
+  // @ts-expect-error a run that did not run holds no lock id
+  const skippedWithLockId: JobRunResult = { ran: false, lockId: 3 };
+
+  expect([ran.lockId, skipped.lockId]).toEqual([3, null]);
+  expect([ranWithoutLockId.ran, skippedWithLockId.ran]).toEqual([true, false]);
 });
 
 function holdJobLock(deps: TestDeps, lockId: number): Promise<boolean> {
