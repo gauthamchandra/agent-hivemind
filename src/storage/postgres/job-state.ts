@@ -1,5 +1,6 @@
-import type { JobSnapshot } from '@/domain/background-jobs.ts';
-import { alertRules } from '@/domain/background-jobs.ts';
+import type { AlertRecord, JobSnapshot } from '@/domain/background-jobs.ts';
+import { alertRules, reminderCriticalMs, reminderNormalMs } from '@/domain/background-jobs.ts';
+import { formatTime } from '@/domain/time.ts';
 import type { UnitOfWork } from '@/ports/storage.ts';
 import {
   alertParams,
@@ -47,6 +48,8 @@ export function jobState(
   | 'clearAlert'
   | 'updateAlertReason'
   | 'countEscalations'
+  | 'openAlerts'
+  | 'openAlertIds'
 > {
   return {
     async saveSessionJobState(jobState, scope) {
@@ -80,15 +83,7 @@ export function jobState(
     },
 
     async insertAlert(alert) {
-      await sql.query(
-        `INSERT INTO alerts (
-           id, workspace_id, group_id, rule, target_id, severity, reason, opened_at,
-           last_seen_at, cleared_at
-         ) VALUES (
-           $1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz, $10::timestamptz
-         )`,
-        alertParams(alert)
-      );
+      await insertAlertRow(sql, alert);
     },
 
     async touchAlert(id, now) {
@@ -111,6 +106,16 @@ export function jobState(
       );
     },
 
+    openAlerts() {
+      return knownOpenAlerts(sql);
+    },
+
+    async openAlertIds() {
+      const rows = await many(sql, 'SELECT id FROM alerts WHERE cleared_at IS NULL', []);
+
+      return rows.map(row => readString(row, 'id'));
+    },
+
     countEscalations(groupId, since) {
       return count(
         sql,
@@ -120,6 +125,47 @@ export function jobState(
       );
     },
   };
+}
+
+async function knownOpenAlerts(sql: Sql): Promise<AlertRecord[]> {
+  const rows = await many(
+    sql,
+    `SELECT * FROM alerts WHERE cleared_at IS NULL AND rule IN (${knownAlertRules})`,
+    []
+  );
+
+  return rows.map(parseAlert);
+}
+
+/**
+ * A condition that clears and returns gets a new row. It inherits when the earlier rows were last
+ * notified while that is younger than its reminder interval, so it is notified at most once per
+ * interval, not once per return. An older notification is not inherited, so a new incident is a
+ * first notification.
+ */
+async function insertAlertRow(sql: Sql, alert: AlertRecord): Promise<void> {
+  await sql.query(
+    `INSERT INTO alerts (
+       id, workspace_id, group_id, rule, target_id, severity, reason, opened_at,
+       last_seen_at, cleared_at, notified_at
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz, $10::timestamptz,
+       COALESCE(
+         $11::timestamptz,
+         (
+           SELECT max(notified_at) FROM alerts
+           WHERE rule = $4 AND target_id = $5 AND notified_at > $12::timestamptz
+         )
+       )
+     )`,
+    [...alertParams(alert), inheritedSince(alert)]
+  );
+}
+
+function inheritedSince(alert: AlertRecord): string {
+  const interval = alert.severity === 'critical' ? reminderCriticalMs : reminderNormalMs;
+
+  return formatTime(new Date(Date.parse(alert.openedAt) - interval));
 }
 
 async function readJobSnapshot(sql: Sql): Promise<JobSnapshot> {
@@ -182,13 +228,7 @@ async function readJobSnapshot(sql: Sql): Promise<JobSnapshot> {
          WHERE used_at IS NULL AND voided_at IS NULL AND expires_at IS NOT NULL`,
     []
   );
-  const alerts = (
-    await many(
-      sql,
-      `SELECT * FROM alerts WHERE cleared_at IS NULL AND rule IN (${knownAlertRules})`,
-      []
-    )
-  ).map(parseAlert);
+  const alerts = await knownOpenAlerts(sql);
 
   return {
     groups,

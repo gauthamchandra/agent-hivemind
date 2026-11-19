@@ -222,12 +222,14 @@ PORT=8787 bun run start
 
 The service reads these variables:
 
-| Variable                | What it does                                                                        |
-| ----------------------- | ----------------------------------------------------------------------------------- |
-| `HIVEMIND_RESPONSE_KEY` | Required: the service will not start without it. Generate it once and reuse it.     |
-| `PORT`                  | Listen port. Unset uses an ephemeral port.                                          |
-| `HIVEMIND_DATA`         | Directory for the Postgres data. Defaults to `.hivemind`.                           |
-| `HIVEMIND_POSTGRES_URL` | Connection string for the PostgreSQL spawn-gate test. The service does not read it. |
+| Variable                  | What it does                                                                                                   |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `HIVEMIND_RESPONSE_KEY`   | Required: the service will not start without it. Generate it once and reuse it.                                |
+| `PORT`                    | Listen port. Unset uses an ephemeral port.                                                                     |
+| `HIVEMIND_DATA`           | Directory for the Postgres data. Defaults to `.hivemind`.                                                      |
+| `HIVEMIND_POSTGRES_URL`   | Connection string for the PostgreSQL spawn-gate test. The service does not read it.                            |
+| `HIVEMIND_WEBHOOK_URL`    | Optional. Where alert notifications are sent. See [Receive alert notifications](#receive-alert-notifications). |
+| `HIVEMIND_WEBHOOK_SECRET` | Required when the webhook address is set. Signs each notification.                                             |
 
 In a second terminal, with the bootstrap key from the first:
 
@@ -265,6 +267,43 @@ group go from `planned` to `done` over HTTP, run the scripted test:
 ```bash
 bun test src/http/server.test.ts -t "scripted group reaches done"
 ```
+
+### Receive alert notifications
+
+Set `HIVEMIND_WEBHOOK_URL` and `HIVEMIND_WEBHOOK_SECRET`, and the usage poll sends one POST for each
+alert that is due. With neither set, nothing is sent and the alert row is the inbox.
+
+- **Address.** https, or http on a loopback host. An address that is private, loopback, link-local,
+  multicast or reserved is refused, and a service started with one stops with an error that does not
+  repeat the address. The request connects to the address it resolved and checks the server's
+  certificate against the host name in the address.
+- **Body.** One flat JSON object whose values are all strings, with an empty string where a value is
+  missing: `delivery_id`, `sent_at`, `reminder` (`"true"` or `"false"`), `workspace_id`, `group_id`,
+  `group_name`, `alert_id`, `target_id`, `rule`, `severity`, `summary`, `action`, `task_title`,
+  `session_role`, `session_address`, `open_for` and `reason`. A Slack Workflow webhook trigger takes
+  only flat key-value pairs, which is why nothing is nested. The service has not been run against
+  Slack: the tests check the body and the signed request against local servers.
+- **Reason.** For an escalation, `reason` is free text that the session wrote. Only this service's own
+  token formats are redacted from it, so treat the webhook as an internal channel.
+- **Signature.** Each request has `hivemind-timestamp`, which is the `sent_at` value in ISO 8601,
+  `hivemind-delivery`, which is the `delivery_id`, and `hivemind-signature`, which is `v1=` followed by
+  the hex HMAC-SHA256, keyed with `HIVEMIND_WEBHOOK_SECRET`, of the timestamp, a dot and the raw body.
+  A receiver should reject a timestamp that is old, and discard a delivery id it has already seen,
+  because a delivery that was received but not recorded is sent again under the same id.
+- **Proxy.** An http address is accepted only for a loopback host, and the service refuses to start
+  with one while `HTTP_PROXY` is set, because Bun would send the request through the proxy in the
+  clear. Bun matches `NO_PROXY` against the address the request uses, so put `127.0.0.1` (a
+  `localhost` address is requested as `127.0.0.1`), `[::1]` or `*` in it to keep the request direct, or
+  use https, which goes through `HTTPS_PROXY` in a tunnel. Bun reads `http_proxy` and `no_proxy`
+  before `HTTP_PROXY` and `NO_PROXY`, and an empty lowercase variable still wins.
+- **Host.** On https the `Host` header carries the host name without the port, so a receiver on a
+  port that is not the default does not see the port in it. Bun checks the certificate against that
+  header: with the port every name fails, and a check made after the connection sends the request
+  before it rejects a certificate for another name.
+- **When.** An alert is notified at most once per reminder interval, even if it clears and returns within it, so a new incident soon after a notified one waits out the rest of the interval: four
+  hours for a critical alert and a day for the rest, until it has been open for a week. A run sends at
+  most five, a failed one is sent again after five minutes and then after twice as long, up to an hour,
+  and each request is cut off after 10 seconds.
 
 ## Client
 

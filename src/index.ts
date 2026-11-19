@@ -9,6 +9,7 @@ import { HivemindError } from '@/domain/errors.ts';
 import { type ConnectionId, createIds, defaultWorkspaceId } from '@/domain/ids.ts';
 import { formatTime } from '@/domain/time.ts';
 import { startHttp } from '@/http/server.ts';
+import { webhookNotifierFromEnv } from '@/notify/webhook.ts';
 import { createSimulatedPlatform } from '@/platform/simulated/adapter.ts';
 import { systemClock } from '@/ports/clock.ts';
 import type { Platforms } from '@/ports/platform.ts';
@@ -28,6 +29,7 @@ export async function startHivemind(options?: {
   bootstrapSecret: string | null;
   stop: () => Promise<void>;
 }> {
+  const notifier = webhookNotifierFromEnv(process.env);
   const dataDir = options?.dataDir === undefined ? '.hivemind' : options.dataDir;
   const database = dataDir === null ? new PGlite() : new PGlite(dataDir);
   const store = openPgliteStore(database);
@@ -60,6 +62,7 @@ export async function startHivemind(options?: {
     ...(options?.port === undefined ? {} : { port: options.port }),
   });
   const workerId = createWorkerId(systemRandom.bytes(8));
+  const jobOptions = notifier === null ? { workerId } : { workerId, notifier };
   let draining = false;
   let backgroundJobsRunning = false;
   let activeDrain: Promise<void> = Promise.resolve();
@@ -68,7 +71,7 @@ export async function startHivemind(options?: {
     if (backgroundJobsRunning) return;
 
     backgroundJobsRunning = true;
-    activeBackgroundJobs = runDueJobs(deps, platforms, { workerId })
+    activeBackgroundJobs = runDueJobs(deps, platforms, jobOptions)
       .then(() => undefined)
       .catch(error => {
         console.error('Background jobs failed. Each job runs again after its interval.', error);

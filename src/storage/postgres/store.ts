@@ -2,6 +2,7 @@ import type { PGlite, Transaction } from '@electric-sql/pglite';
 import { requireConnectionId } from '@/domain/ids.ts';
 import type { Store, UnitOfWork } from '@/ports/storage.ts';
 import { accountWork } from '@/storage/postgres/account-work.ts';
+import { alertDeliveries } from '@/storage/postgres/alert-deliveries.ts';
 import { groupWork } from '@/storage/postgres/group-work.ts';
 import { jobHousekeeping } from '@/storage/postgres/job-housekeeping.ts';
 import { jobLocks } from '@/storage/postgres/job-locks.ts';
@@ -126,6 +127,7 @@ function unitOfWork(sql: Sql): UnitOfWork {
     ...messageWork(sql),
     ...jobLocks(sql),
     ...jobState(sql),
+    ...alertDeliveries(sql),
     ...jobHousekeeping(sql),
   });
 }
