@@ -1,3 +1,4 @@
+import { deliverAlerts } from '@/core/alert-notify.ts';
 import { syncAlerts } from '@/core/alert-sync.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
 import { type JobRunResult, type RunOptions, takeJob } from '@/core/job-run.ts';
@@ -53,6 +54,7 @@ export async function runUsagePoll(
     unreliableConnections: unreliable,
     tasksWithUsageGrowth: grew,
   });
+  await deliverAlerts(deps, options, lockId);
 
   return { ran: true, lockId };
 }

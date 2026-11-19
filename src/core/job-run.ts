@@ -5,10 +5,13 @@ import { jobLockMs } from '@/domain/background-jobs.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { WorkspaceId } from '@/domain/ids.ts';
 import { formatTime } from '@/domain/time.ts';
+import type { Notifier } from '@/ports/notifier.ts';
 
 export type RunOptions = {
   workerId: string;
   crashAt?: 'after_planned_action';
+  /** Where alert notifications go. With none, a run delivers nothing. */
+  notifier?: Notifier;
 };
 
 export type JobRunResult = { ran: true; lockId: number } | { ran: false; lockId: null };

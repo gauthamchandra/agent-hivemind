@@ -295,6 +295,9 @@ A live or released session can escalate with `hivemind escalate --reason`. The c
 `escalation` alert for that session. A second call with a different reason updates the alert, and
 one with the same reason changes nothing. The usage poll keeps the alert open until the session
 ends, then clears it. The reason is capped at 1,024 bytes and has this service's tokens redacted.
+An escalation is critical, so with a webhook configured it is notified once and reminded every four
+hours for a week, as long as the webhook accepts the deliveries: one that cannot be sent for a day
+expires and is dropped.
 
 A group opens at most ten escalations in an hour, and the next one is `rate_limited`. A session
 that already has an alert can still update it. A session that has ended cannot escalate: ending
@@ -310,3 +313,26 @@ A group also closes when its planner cannot start. Opening a group creates the g
 root task, then starts the planner. If the platform refuses that start, or the start throws
 (a cap, for example), or a retry finds the planner as `start_failed`, the service fails the
 root task and that closes the group.
+
+## Alert notifications
+
+An alert is notified through a row in `alert_deliveries`. A row is in one of four states, and an
+alert has at most one row that is `sending` or `failed`.
+
+| From                               | To        | When                                                                                                                                                                    |
+| ---------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| none                               | `sending` | A run records it before it sends, with `attempts` 1 and a delivery id that is now fixed.                                                                                |
+| `sending`                          | `sent`    | The webhook accepted it. The alert's `notified_at` is set.                                                                                                              |
+| `sending`                          | `failed`  | The webhook refused it, could not be reached, or did not answer in 10 seconds.                                                                                          |
+| `failed`, or `sending` for a while | `sending` | A run sends it again under the same id and `attempts` goes up by one. It waits 5 minutes, then twice as long after each send, up to an hour, counted from `updated_at`. |
+| `sending`, `failed`                | `expired` | It is a day old, its alert has closed, or its alert is too old for it.                                                                                                  |
+
+`sent` and `expired` are final. An alert is too old for a first notification when it has been open
+for a day, and for a reminder when it has been open for a week.
+
+An open alert is due when it has no outstanding delivery and either was never notified and opened
+less than a day ago, or was notified at least one reminder interval ago and opened less than a week
+ago. The interval is four hours for a critical alert and a day otherwise. A new alert row for the
+same rule and target inherits when the earlier rows were last notified, so a condition that clears
+and returns is notified at most once per interval. A run sends at most five deliveries, critical
+first and then the alert open longest.

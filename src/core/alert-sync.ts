@@ -66,6 +66,7 @@ export async function syncAlerts(
           openedAt: now,
           lastSeenAt: now,
           clearedAt: null,
+          notifiedAt: null,
         });
       } else {
         await tx.touchAlert(existing.id, now);
