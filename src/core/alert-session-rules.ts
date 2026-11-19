@@ -93,6 +93,29 @@ export function considerSession(
   if (input.relayed.has(session.id) && active) {
     flag('instruction_relayed');
   }
+
+  keepEscalation(input, session, desired);
+}
+
+// The route opens an escalation and the poll only keeps it, so it is kept for as long as the
+// session has not ended.
+function keepEscalation(input: Evaluation, session: SessionRecord, desired: DesiredAlert[]): void {
+  if (session.life === 'ended') return;
+
+  const escalation = input.alerts.find(
+    alert => alert.rule === 'escalation' && alert.targetId === session.id
+  );
+
+  if (escalation !== undefined) {
+    push(
+      desired,
+      'escalation',
+      session.id,
+      session.workspace_id,
+      session.group_id,
+      escalation.reason
+    );
+  }
 }
 
 function idle(

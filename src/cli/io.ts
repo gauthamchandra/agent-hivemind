@@ -200,11 +200,14 @@ export function readField(body: Record<string, unknown>, field: string): string 
 
 export class CliError extends Error {
   readonly code: string;
+  readonly hint?: string;
 
-  constructor(code: string, message: string) {
+  constructor(code: string, message: string, hint?: string) {
     super(message);
     this.name = 'CliError';
     this.code = code;
+
+    if (hint !== undefined) this.hint = hint;
   }
 }
 

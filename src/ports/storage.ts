@@ -1,5 +1,6 @@
 import type {
   AlertRecord,
+  AlertRule,
   JobName,
   JobSnapshot,
   PlannedAction,
@@ -219,9 +220,12 @@ export interface UnitOfWork {
   finishPlannedAction(id: string, job: JobName, lockId: number, now: string): Promise<boolean>;
   saveSessionJobState(jobState: SessionJobState, scope: 'usage_poll' | 'reaper'): Promise<void>;
   loadJobSnapshot(): Promise<JobSnapshot>;
+  openAlertByKey(rule: AlertRule, targetId: string): Promise<AlertRecord | null>;
   insertAlert(alert: AlertRecord): Promise<void>;
   touchAlert(id: string, now: string): Promise<void>;
   clearAlert(id: string, now: string): Promise<void>;
+  updateAlertReason(id: string, reason: string, now: string): Promise<void>;
+  countEscalations(groupId: GroupId, since: string): Promise<number>;
   correctCounters(): Promise<string[]>;
 }
 

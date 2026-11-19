@@ -13,7 +13,7 @@ import { parseGroup } from '@/storage/postgres/parse-group.ts';
 import { parseTask } from '@/storage/postgres/parse-task.ts';
 import { parseSession } from '@/storage/postgres/session-read.ts';
 import type { Sql } from '@/storage/postgres/store-query.ts';
-import { many, readNullableTime, readString } from '@/storage/postgres/store-query.ts';
+import { count, many, one, readNullableTime, readString } from '@/storage/postgres/store-query.ts';
 
 const usagePollColumns =
   'bad_status_streak = EXCLUDED.bad_status_streak, status_since_at = EXCLUDED.status_since_at, last_reading_at = EXCLUDED.last_reading_at, last_attempt_at = EXCLUDED.last_attempt_at, usage_grew_at = EXCLUDED.usage_grew_at';
@@ -39,7 +39,14 @@ export function jobState(
   sql: Sql
 ): Pick<
   UnitOfWork,
-  'saveSessionJobState' | 'loadJobSnapshot' | 'insertAlert' | 'touchAlert' | 'clearAlert'
+  | 'saveSessionJobState'
+  | 'loadJobSnapshot'
+  | 'openAlertByKey'
+  | 'insertAlert'
+  | 'touchAlert'
+  | 'clearAlert'
+  | 'updateAlertReason'
+  | 'countEscalations'
 > {
   return {
     async saveSessionJobState(jobState, scope) {
@@ -60,6 +67,16 @@ export function jobState(
 
     loadJobSnapshot() {
       return readJobSnapshot(sql);
+    },
+
+    async openAlertByKey(rule, targetId) {
+      const row = await one(
+        sql,
+        'SELECT * FROM alerts WHERE rule = $1 AND target_id = $2 AND cleared_at IS NULL',
+        [rule, targetId]
+      );
+
+      return row === null ? null : parseAlert(row);
     },
 
     async insertAlert(alert) {
@@ -84,6 +101,22 @@ export function jobState(
          SET cleared_at = $2::timestamptz, last_seen_at = $2::timestamptz
          WHERE id = $1 AND cleared_at IS NULL`,
         [id, now]
+      );
+    },
+
+    async updateAlertReason(id, reason, now) {
+      await sql.query(
+        'UPDATE alerts SET reason = $2, last_seen_at = $3::timestamptz WHERE id = $1',
+        [id, reason, now]
+      );
+    },
+
+    countEscalations(groupId, since) {
+      return count(
+        sql,
+        `SELECT count(*)::int AS count FROM alerts
+         WHERE group_id = $1 AND rule = 'escalation' AND opened_at >= $2::timestamptz`,
+        [groupId, since]
       );
     },
   };

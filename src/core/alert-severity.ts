@@ -16,6 +16,7 @@ const severity: Record<AlertRule, AlertSeverity> = {
   budget_reached: 'critical',
   session_over_role_ceiling: 'normal',
   root_needs_decision: 'normal',
+  escalation: 'critical',
   delivery_backlog: 'normal',
   end_not_confirmed: 'normal',
   end_pending: 'critical',

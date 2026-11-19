@@ -14,3 +14,7 @@ export function listInbox(io: Io, kind: string | undefined): Promise<Record<stri
 
   return call(io, 'GET', path, undefined, true);
 }
+
+export function escalate(io: Io, reason: string): Promise<Record<string, unknown>> {
+  return call(io, 'POST', '/v1/session/escalate', { reason }, true);
+}

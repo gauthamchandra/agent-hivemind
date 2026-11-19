@@ -600,6 +600,121 @@ test('creating a task again with the same key does not write a second task', asy
   expect(children).toHaveLength(1);
 });
 
+test('the escalate route opens one alert and a second call updates its reason', async () => {
+  const ctx = await bootHttpService();
+  const key = await creatorKey(ctx);
+  const created = await createCheckoutGroup(ctx.server, key, 'escalate-group');
+  const planner = created.body.session as { id: string };
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
+  const first = await sendJson(
+    ctx.server,
+    'POST',
+    '/v1/session/escalate',
+    { reason: 'Blocked on a decision.' },
+    bearer(token)
+  );
+  const second = await sendJson(
+    ctx.server,
+    'POST',
+    '/v1/session/escalate',
+    { reason: 'Still blocked.' },
+    bearer(token)
+  );
+  const opened = first.body.alert as { id: string; rule: string };
+  const updated = second.body.alert as { id: string; reason: string };
+
+  expectStatus(first, 200);
+  expectStatus(second, 200);
+  expect(opened.rule).toBe('escalation');
+  expect(updated.id).toBe(opened.id);
+  expect(updated.reason).toBe('Still blocked.');
+});
+
+test('the escalate route answers with the public fields of the alert in snake case', async () => {
+  const ctx = await bootHttpService();
+  const key = await creatorKey(ctx);
+  const created = await createCheckoutGroup(ctx.server, key, 'escalate-shape-group');
+  const planner = created.body.session as { id: string };
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
+  const answer = await sendJson(
+    ctx.server,
+    'POST',
+    '/v1/session/escalate',
+    { reason: 'Blocked on a decision.' },
+    bearer(token)
+  );
+
+  expectStatus(answer, 200);
+  expect(Object.keys(answer.body.alert as object).sort()).toEqual([
+    'group_id',
+    'id',
+    'last_seen_at',
+    'opened_at',
+    'reason',
+    'rule',
+    'severity',
+  ]);
+});
+
+test('an escalation is not a progress report', async () => {
+  const ctx = await bootHttpService();
+  const key = await creatorKey(ctx);
+  const created = await createCheckoutGroup(ctx.server, key, 'escalate-report-group');
+  const planner = created.body.session as { id: string };
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
+  const before = await ctx.deps.store.session(defaultWorkspaceId, requireSessionId(planner.id));
+
+  await sendJson(
+    ctx.server,
+    'POST',
+    '/v1/session/escalate',
+    { reason: 'Blocked on a decision.' },
+    bearer(token)
+  );
+
+  const after = await ctx.deps.store.session(defaultWorkspaceId, requireSessionId(planner.id));
+
+  expect(after?.last_report_at).toBe(before?.last_report_at ?? null);
+});
+
+test('the escalate route refuses a session that has ended', async () => {
+  const ctx = await bootHttpService();
+  const key = await creatorKey(ctx);
+  const created = await createCheckoutGroup(ctx.server, key, 'escalate-ended-group');
+  const planner = created.body.session as { id: string };
+  const token = requirePresent(
+    ctx.simulated.secretFor(planner.id),
+    'the planner token should be injected'
+  );
+  const ended = await sendJson(
+    ctx.server,
+    'POST',
+    '/v1/session/end',
+    { reason: 'The planner is done.' },
+    bearer(token)
+  );
+  const late = await sendJson(
+    ctx.server,
+    'POST',
+    '/v1/session/escalate',
+    { reason: 'Too late.' },
+    bearer(token)
+  );
+
+  expectStatus(ended, 200);
+  expectStatus(late, 401);
+  expect(errorCode(late.body)).toBe('unauthenticated');
+});
+
 test('a retry of the end route finishes the platform stop', async () => {
   const ctx = await bootHttpService();
   const key = await creatorKey(ctx);
