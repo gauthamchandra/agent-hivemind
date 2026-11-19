@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted on 17 November 2026. The decision is accepted whole and the code lands in stages. The job lock, the reaper and the usage poll are built. Alerts, notifications and housekeeping are not.
+Accepted on 17 November 2026. The decision is accepted whole and the code lands in stages. The job lock, the reaper, the usage poll and alerts are built. Notifications and housekeeping are not.
 
 ## Context
 
@@ -16,7 +16,7 @@ The platform call that reads status or usage, and the call that suspends or ends
 
 The process that drains the outbox also runs three background jobs from its timer: the usage poll every 5 minutes, the reaper every 15 minutes, and housekeeping every 24 hours. Before a job runs, the process takes the job's row in `job_locks`. The row holds the worker that locked it, an expiry 4 minutes out, and a lock id. The lock id is a number that goes up by one each time a worker takes the lock. Taking the row is one conditional update, and that statement is the same on PGlite and on PostgreSQL. The process that does not get the row does not run the job.
 
-Every write a job run makes to its own records is in a transaction that locks that row for the lock id the run took. Those records are the session job state, the planned actions, and the counter repairs. While the lock id still matches, the write extends the expiry, so a run can outlast the original four minutes. If the lock id no longer matches, the transaction writes nothing. The caller learns that its lock id is old. A worker that stops, and makes no further write, blocks the job until the expiry.
+Every write a job run makes to its own records is in a transaction that locks that row for the lock id the run took. Those records are the session job state, the planned actions, the alerts, and the counter repairs. While the lock id still matches, the write extends the expiry, so a run can outlast the original four minutes. If the lock id no longer matches, the transaction writes nothing. The caller learns that its lock id is old. A worker that stops, and makes no further write, blocks the job until the expiry.
 
 The lock id does not cover an operation that any caller may run, such as ending a session. That operation keeps its own locks and is safe to repeat. A worker that lost the job lock and finishes such an operation late does no harm, because the next worker would have made the same call. For example, the reaper ends a session whose task has been closed for 60 minutes. A closed task does not reopen, so the end is still due when a worker that lost the lock completes it.
 

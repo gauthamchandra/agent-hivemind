@@ -1,0 +1,1 @@
+ALTER TABLE session_job_state VALIDATE CONSTRAINT session_job_state_bad_status_streak_check;

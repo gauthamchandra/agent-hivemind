@@ -15,6 +15,7 @@ export type ChangesetId = string & { readonly __brand: 'ChangesetId' };
 export type MessageId = string & { readonly __brand: 'MessageId' };
 export type WaitId = string & { readonly __brand: 'WaitId' };
 export type CopyId = string & { readonly __brand: 'CopyId' };
+export type AlertId = string & { readonly __brand: 'AlertId' };
 
 export type IdClock = { now(): Date };
 export type IdRandom = { bytes(length: number): Uint8Array };
@@ -32,6 +33,7 @@ export type IdFactory = {
   message(): MessageId;
   wait(): WaitId;
   copy(): CopyId;
+  alert(): AlertId;
 };
 
 const patterns = {
@@ -47,6 +49,7 @@ const patterns = {
   message: new RegExp(`^msg_${body}$`),
   wait: new RegExp(`^wat_${body}$`),
   copy: new RegExp(`^cpy_${body}$`),
+  alert: new RegExp(`^alr_${body}$`),
 } as const;
 
 export function isWorkspaceId(value: string): value is WorkspaceId {
@@ -97,6 +100,10 @@ export function isCopyId(value: string): value is CopyId {
   return patterns.copy.test(value);
 }
 
+export function isAlertId(value: string): value is AlertId {
+  return patterns.alert.test(value);
+}
+
 export function requireWorkspaceId(value: string): WorkspaceId {
   return brand(value, isWorkspaceId, 'workspace');
 }
@@ -143,6 +150,10 @@ export function requireWaitId(value: string): WaitId {
 
 export function requireCopyId(value: string): CopyId {
   return brand(value, isCopyId, 'copy');
+}
+
+export function requireAlertId(value: string): AlertId {
+  return brand(value, isAlertId, 'alert');
 }
 
 /** The self-hosted installation's first workspace. The identifier is fixed by the specification. */
@@ -198,6 +209,7 @@ export function createIds(clock: IdClock, random: IdRandom): IdFactory {
     message: () => requireMessageId(mint('msg_')),
     wait: () => requireWaitId(mint('wat_')),
     copy: () => requireCopyId(mint('cpy_')),
+    alert: () => requireAlertId(mint('alr_')),
   };
 }
 

@@ -1,4 +1,5 @@
 import type { ConnectionId } from '@/domain/ids.ts';
+import type { SessionRole } from '@/domain/model.ts';
 import { type Capability, capabilities } from '@/domain/platform.ts';
 import {
   descriptionFor,
@@ -37,6 +38,7 @@ export type SimulatedPlatform = {
   }[];
   setSessionStatus(ref: string, status: string): void;
   setSessionUsage(ref: string, usage: number): void;
+  setRoleCeiling(role: SessionRole, ceiling: number): void;
   setUsageUnit(unit: string, display: string): void;
   plantSession(key: string): void;
 };
@@ -58,6 +60,7 @@ export function createSimulatedPlatform(
     reportedUsage: 0,
     usageUnit: options?.usageUnit ?? 'unit',
     usageUnitDisplay: options?.usageUnitDisplay ?? 'Units',
+    roleCeilings: { planner: 20, challenger: 10, implementer: 30, reviewer: 10, verifier: 10 },
     credential: 'simulated-credential',
   };
   const adapter: PlatformAdapter = {
@@ -139,6 +142,9 @@ export function createSimulatedPlatform(
       const session = world.sessions.find(item => item.ref === ref);
 
       if (session !== undefined) session.reported = usage;
+    },
+    setRoleCeiling(role, ceiling) {
+      world.roleCeilings[role] = ceiling;
     },
     setUsageUnit(unit, display) {
       world.usageUnit = unit;

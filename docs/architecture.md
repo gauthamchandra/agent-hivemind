@@ -264,6 +264,7 @@ default the service starts an in-process Postgres that keeps its files in a data
 | `job_locks`            | One row per background job: who holds the lock, its expiry, and its lock id. No workspace column. |
 | `planned_actions`      | An action a job recorded before it called the platform. One open row per target.                  |
 | `session_job_state`    | What the background jobs remember about one session between runs.                                 |
+| `alerts`               | A condition a person must see. The key is the rule and the target, with one open row per key.     |
 
 The database enforces what code must never break:
 
@@ -342,6 +343,13 @@ the end path and the reaper clear that flag. A start is refused once a run recor
 reached the budget. A start can still be accepted until the next run. The budget does not end
 sessions that are already running. See [ADR 0005](adr/0005-spend-is-polled-while-sessions-run.md)
 and [ADR 0007](adr/0007-a-job-lock-keeps-each-background-job-to-one-process.md).
+
+At the end of each run the usage poll also decides which alerts should be open. An alert is a row
+for a condition a person must see, such as a session that looks stopped while its task is open,
+a session waiting for a person, spend at 80 percent of the budget, or a task with no activity for
+hours. The key is the rule and the target. The poll opens a missing alert, keeps an open one, and
+clears one whose condition ended. A rule that needs the platform's answer neither opens nor clears
+while that connection failed to answer in the run.
 
 ## Surviving failure
 
@@ -483,3 +491,6 @@ This list is the gap between what the code models and what a running system can 
     exercised by one CI job, but startup always uses the in-process Postgres.
 11. **Sign-in is a stub.** The `accounts` table exists, and a person's account id is always
     null.
+12. **Nobody is told about an alert.** An alert is a row. Notifying a person, and a console view of
+    the alerts, are not built. An alert about a failing connection needs the daily probe, which is
+    not built either.

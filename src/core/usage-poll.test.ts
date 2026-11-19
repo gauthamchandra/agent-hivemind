@@ -216,7 +216,14 @@ test('a usage poll write does not erase the reaper fields', async () => {
   await ctx.deps.store.transact(async tx => {
     await tx.saveSessionJobState({ ...base, endAttemptRuns: 7 }, 'reaper');
     await tx.saveSessionJobState(
-      { ...base, endAttemptRuns: 0, lastReadingAt: '2026-11-16T00:05:00.000Z' },
+      {
+        ...base,
+        endAttemptRuns: 0,
+        lastReadingAt: '2026-11-16T00:05:00.000Z',
+        badStatusStreak: 2,
+        statusSince: '2026-11-16T00:01:00.000Z',
+        usageGrewAt: '2026-11-16T00:04:00.000Z',
+      },
       'usage_poll'
     );
   });
@@ -229,9 +236,13 @@ test('a usage poll write does not erase the reaper fields', async () => {
 
   expect(jobState.endAttemptRuns).toBe(7);
   expect(jobState.lastReadingAt).toBe('2026-11-16T00:05:00.000Z');
+  expect(jobState.badStatusStreak).toBe(2);
 
   await ctx.deps.store.transact(tx =>
-    tx.saveSessionJobState({ ...base, endAttemptRuns: 3, lastReadingAt: null }, 'reaper')
+    tx.saveSessionJobState(
+      { ...base, endAttemptRuns: 3, lastReadingAt: null, badStatusStreak: 0 },
+      'reaper'
+    )
   );
 
   const afterReaper = await ctx.deps.store.transact(tx => tx.loadJobSnapshot());
@@ -242,6 +253,9 @@ test('a usage poll write does not erase the reaper fields', async () => {
 
   expect(kept.endAttemptRuns).toBe(3);
   expect(kept.lastReadingAt).toBe('2026-11-16T00:05:00.000Z');
+  expect(kept.badStatusStreak).toBe(2);
+  expect(kept.statusSince).toBe('2026-11-16T00:01:00.000Z');
+  expect(kept.usageGrewAt).toBe('2026-11-16T00:04:00.000Z');
 });
 
 test('an old lock id cannot overwrite the poll result the next worker stored', async () => {

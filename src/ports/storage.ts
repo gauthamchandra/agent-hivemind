@@ -1,4 +1,5 @@
 import type {
+  AlertRecord,
   JobName,
   JobSnapshot,
   PlannedAction,
@@ -218,6 +219,9 @@ export interface UnitOfWork {
   finishPlannedAction(id: string, job: JobName, lockId: number, now: string): Promise<boolean>;
   saveSessionJobState(jobState: SessionJobState, scope: 'usage_poll' | 'reaper'): Promise<void>;
   loadJobSnapshot(): Promise<JobSnapshot>;
+  insertAlert(alert: AlertRecord): Promise<void>;
+  touchAlert(id: string, now: string): Promise<void>;
+  clearAlert(id: string, now: string): Promise<void>;
   correctCounters(): Promise<string[]>;
 }
 
