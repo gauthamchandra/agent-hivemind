@@ -18,8 +18,9 @@ communication: any agent can message one or more other agents in its group direc
 and tested. Two large pieces are missing. The only agent platform behind it is a simulated
 one, so no real agent runs yet. And the agent-to-agent messaging is not built: the policy
 table allows it, but no route, command or delivery backs it. One more limit matters for the
-budget: spend is read only when a session ends, so a running agent can pass its budget
-unnoticed. [Not built yet](docs/architecture.md#not-built-yet) lists every gap.
+budget: spend is read every five minutes while sessions run, and a group that has reached its
+budget refuses new starts, but the agents already running are not stopped.
+[Not built yet](docs/architecture.md#not-built-yet) lists every gap.
 
 ## Why this exists
 

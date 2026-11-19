@@ -216,7 +216,7 @@ export interface UnitOfWork {
   }): Promise<'inserted' | 'open' | 'stale'>;
   openPlannedActions(job: JobName): Promise<PlannedAction[]>;
   finishPlannedAction(id: string, job: JobName, lockId: number, now: string): Promise<boolean>;
-  saveSessionJobState(jobState: SessionJobState): Promise<void>;
+  saveSessionJobState(jobState: SessionJobState, scope: 'usage_poll' | 'reaper'): Promise<void>;
   loadJobSnapshot(): Promise<JobSnapshot>;
   correctCounters(): Promise<string[]>;
 }

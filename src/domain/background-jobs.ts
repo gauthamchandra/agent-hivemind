@@ -3,6 +3,7 @@ import type { WaitRecord } from '@/domain/message.ts';
 import type { Group, SessionRecord, Task } from '@/domain/model.ts';
 
 /** How often the worker may start each job. The job lock, not the timer, decides which process runs it. */
+export const usagePollIntervalMs = 5 * 60 * 1000;
 export const reaperIntervalMs = 15 * 60 * 1000;
 
 /** A write extends the expiry while its lock id still matches. A worker that stops blocks the job until the expiry passes. */
@@ -10,7 +11,9 @@ export const jobLockMs = 4 * 60 * 1000;
 /** How often a worker looks for a due job, and how close to expiry a write must be to extend the lock by `jobLockMs`. */
 export const jobLockCheckMs = 60 * 1000;
 
+export const usagePollDeadlineMs = 4 * 60 * 1000;
 export const reaperDeadlineMs = 10 * 60 * 1000;
+export const recordsPerWorkspace = 200;
 
 export const closedTaskGraceMs = 60 * 60 * 1000;
 export const startingResolveMs = 10 * 60 * 1000;
@@ -40,6 +43,8 @@ export type SessionJobState = {
   lastFind: 'found' | 'absent' | 'inconclusive' | null;
   suspendedAt: string | null;
   suspendedProgressAt: string | null;
+  lastReadingAt: string | null;
+  lastAttemptAt: string | null;
   orphanEnded: boolean;
 };
 
@@ -76,6 +81,20 @@ export function emptySessionJobState(
     lastFind: null,
     suspendedAt: null,
     suspendedProgressAt: null,
+    lastReadingAt: null,
+    lastAttemptAt: null,
     orphanEnded: false,
   };
+}
+
+export function sessionJobStateFor(snapshot: JobSnapshot, session: SessionRecord): SessionJobState {
+  const found = snapshot.sessionJobStates.find(jobState => jobState.sessionId === session.id);
+
+  if (found !== undefined) return found;
+
+  const created = emptySessionJobState(session.id, session.workspace_id);
+
+  snapshot.sessionJobStates.push(created);
+
+  return created;
 }

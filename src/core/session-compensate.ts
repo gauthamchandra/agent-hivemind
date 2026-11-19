@@ -68,6 +68,24 @@ export async function reclaimCompensatedStart(
   return stopCompensatedPlatform(deps, platforms, attached);
 }
 
+/** Add only the increase. A later smaller reading does not reduce spend or the stored usage. */
+export function applyReading(
+  group: { spend: string },
+  session: { usage: string | null },
+  reading: number
+): boolean {
+  const next = decimalFromNumber(reading);
+  const previous = session.usage === null ? '0' : canonicalizeDecimal(session.usage);
+  const increase = subtractDecimal(next, previous);
+  const grew = compareDecimal(increase, '0') > 0;
+
+  if (grew) group.spend = addDecimal(group.spend, increase);
+
+  session.usage = compareDecimal(next, previous) > 0 ? next : previous;
+
+  return grew;
+}
+
 /** Stop a platform session that appeared after recovery had already given its place back. */
 export async function stopCompensatedPlatform(
   deps: ServiceDeps,
@@ -112,16 +130,7 @@ export async function readFinalUsage(
 
       if (locked === null || groupRow === null) return;
 
-      const next = decimalFromNumber(reading);
-      const previous = locked.usage === null ? '0' : canonicalizeDecimal(locked.usage);
-      const increase = subtractDecimal(next, previous);
-
-      if (compareDecimal(increase, '0') > 0) {
-        groupRow.spend = addDecimal(groupRow.spend, increase);
-        await tx.updateGroup(groupRow);
-      }
-
-      locked.usage = compareDecimal(next, previous) > 0 ? next : previous;
+      if (applyReading(groupRow, locked, reading)) await tx.updateGroup(groupRow);
       locked.final_usage_pending = false;
       await tx.updateSession(locked);
     });

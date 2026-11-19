@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted on 17 November 2026. The decision is accepted whole and the code lands in stages. The job lock and the reaper are built. The usage poll, alerts, notifications and housekeeping are not.
+Accepted on 17 November 2026. The decision is accepted whole and the code lands in stages. The job lock, the reaper and the usage poll are built. Alerts, notifications and housekeeping are not.
 
 ## Context
 
@@ -22,7 +22,7 @@ The lock id does not cover an operation that any caller may run, such as ending 
 
 A call to a platform or a notifier is made only after the run has recorded a planned action: the action, the target, and a stable identifier. Recording it is the last moment the run can show that it still holds the job lock. The call that follows is one that is safe to repeat. The next worker that takes the lock finishes an open planned action. It does not record a second one for the same action.
 
-The usage poll stores each session's neutral status and its cumulative usage, and adds only the increase to that session's group. A group has one connection, and the connection has one usage unit. A reading from another connection is never added to the group's spend. A reading taken while a session is still running does not clear the flag that says a final reading is still owed after the session ends. A missing reading does not clear it either. Zero is a reading, so it does. That flag is only the reading. `platform_stop_pending` means the platform end has not succeeded. A reading, including zero, does not clear it. The reaper and the end path clear it only after the platform stop succeeds, so a poll cannot leave a platform session running.
+The usage poll stores each session's neutral status and its cumulative usage, and adds only the increase to that session's group. A group has one connection, and the connection has one usage unit. A reading from another connection is never added to the group's spend. A reading taken while a session is still running does not clear the flag that says a final reading is still owed after the session ends. A missing reading does not clear it either. Zero is a reading, so it does. The poll leaves the flag alone while a platform stop is owed. Once none is, an ended session, or a failed start that was given a platform session, that the platform no longer knows owes a reading that can never arrive, so the poll clears the flag without a reading and leaves its usage and last reading time as they were. That flag is only the reading. `platform_stop_pending` means the platform end has not succeeded. A reading, including zero, does not clear it. The reaper and the end path clear it only after the platform stop succeeds, so a poll cannot leave a platform session running.
 
 An alert has a stable key, the rule name plus the target. The same condition notifies once, sends a reminder after its reminder interval with a new delivery id, and clears when it ends. A dead session, two readings of stopped, failed, or unknown on an open task, opens one alert. The reaper ends sessions of a task that has been closed for 60 minutes, resolves a `starting` row older than 10 minutes, and resumes an end that stopped halfway. It does not start a session. There is no HTTP route that runs any of the three jobs.
 
@@ -34,7 +34,9 @@ For example, a group whose sessions read 1.5 and 2.5 in that connection's unit s
 
 A worker that stops blocks its job until the 4-minute job lock expires. The next run, on a worker that takes the lock, continues from the planned actions that were recorded.
 
-A worker that lost the lock can still finish a session end that it had already started. The session ends a little late, which is what the next worker would have done. A planned action whose target has already settled stays open until its group is removed. It is a record of what was started, and a later attempt at the same action on that target reuses it.
+A worker that lost the lock can still finish a session end that it had already started. The session ends a little late, which is what the next worker would have done. A planned action whose target has already settled stays open until its group is removed. The one exception is the usage poll, which finishes its own `poll` action once the session leaves the snapshot, because a poll only reads. It is a record of what was started, and a later attempt at the same action on that target reuses it.
+
+The service puts no timeout around a platform call: an adapter bounds every call it makes. A call that never returns holds the run that made it, and the process starts no new run while one is in flight, so neither job runs again in that process until the call returns. The poll's four-minute deadline is checked between sessions, not during a read.
 
 A start can still be accepted between runs. The budget refuses the next start once a run has recorded that spend reached it. The budget does not end sessions that are already running.
 

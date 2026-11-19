@@ -26,12 +26,10 @@ A group, from start to finish:
 3. While its task is `implementing`, an implementer starts a **reviewer**, then moves the task
    to `in_review`. The reviewer signs off, starts a **verifier** if the task's verification
    mode asks for one, and reports the merge.
-4. Spend is meant to be kept current while agents run: every five minutes the service reads each
-   running session's usage from the platform and adds the increase to the group's spend. A start
-   is then refused once a poll records that the budget has been reached, not only after a
-   session ends. A start can still be accepted between polls. Ending agents that are still
-   running is a later step. **This is not built.** Today the service reads usage only when a
-   session ends. See [Budget](#budget) and
+4. Every five minutes the worker that drains the outbox reads each running session's status
+   and usage and adds the increase to the group's spend. A start is refused once a run records
+   that the budget has been reached. A start can still be accepted between runs. The budget
+   does not end sessions that are already running. See [Budget](#budget) and
    [ADR 0005](adr/0005-spend-is-polled-while-sessions-run.md).
 5. When every child task is `done`, the service closes the root task, which closes the group.
 
@@ -80,7 +78,7 @@ Code is split into layers, and Biome fails the build when a layer imports one it
 | domain            | Types, ids, errors, and the task transition tables with the function that applies them | Nothing else                               |
 | policy            | The permission table: which role may take which action, where                          | domain                                     |
 | ports             | The interfaces the services need: storage and the platform adapter                     | domain                                     |
-| core              | The services, including the reaper that runs under the job lock                        | domain, policy, ports                      |
+| core              | The services, including the usage poll and the reaper, which run under the job lock    | domain, policy, ports                      |
 | storage           | The Postgres store and its migrations                                                  | domain, ports                              |
 | platform adapters | One adapter per agent platform. Only a simulated one exists                            | domain, ports                              |
 | http              | Routes, credential checks, error mapping                                               | domain, ports, core                        |
@@ -135,16 +133,19 @@ whatever hosts the agent sessions.
 | start                  | Starts a session from a prompt, a title, settings, and an idempotency key.                                 | Yes                       |
 | find by key            | Answers "did a start with this key create a session?": found, absent, or inconclusive.                     | Yes, in recovery          |
 | end                    | Stops a session. Repeating it must be safe.                                                                | Yes                       |
-| read usage             | Returns the session's cumulative usage. It must never go down.                                             | Yes, after an end         |
+| read usage             | Returns the session's cumulative usage. It must never go down.                                             | Yes                       |
 | probe                  | Lists the capabilities the connection has.                                                                 | No                        |
-| read status, read many | Read a session's neutral status: working, idle, waiting for a person, suspended, stopped, failed, unknown. | No                        |
+| read status, read many | Read a session's neutral status: working, idle, waiting for a person, suspended, stopped, failed, unknown. | Status, on usage poll     |
 | send                   | Messages a running session. Results: accepted, busy, rate limited, gone.                                   | No                        |
 | suspend, describe      | Pause a session. Describe the adapter.                                                                     | Suspend, by the reaper    |
 
 Failures carry one of six classes: `auth`, `rate_limited`, `quota`, `invalid`, `not_found`,
 `unavailable`. A message never carries a credential, a prompt, or a message body. The first
 four classes are **refusals**: the platform said no, so the service gives the place back.
-`unavailable` means the service does not know what happened.
+`unavailable` means the service does not know what happened. The service sets no timeout around a
+platform call, so an adapter bounds every call it makes. A call that never returns holds the job
+run that made it, and no other run starts in that process until it returns. See
+[ADR 0007](adr/0007-a-job-lock-keeps-each-background-job-to-one-process.md).
 
 Nine capabilities exist, and the service reads two. `usage_reading` is required to open a
 group, because a budget cannot work if usage cannot be read. `secret_injection` decides how a
@@ -262,7 +263,7 @@ default the service starts an in-process Postgres that keeps its files in a data
 | `connections`          | Which adapter the workspace uses.                                                                 |
 | `job_locks`            | One row per background job: who holds the lock, its expiry, and its lock id. No workspace column. |
 | `planned_actions`      | An action a job recorded before it called the platform. One open row per target.                  |
-| `session_job_state`    | What the reaper remembers about one session between runs.                                         |
+| `session_job_state`    | What the background jobs remember about one session between runs.                                 |
 
 The database enforces what code must never break:
 
@@ -328,23 +329,19 @@ increase over what the service already stored for that session, so a reading nev
 The code has an owner-or-administrator "raise" and an administrator "correct", which may lower
 a budget but not below spend. No HTTP route calls either.
 
-**Intended.** A scheduled job reads the usage of every running session every five minutes and
-adds the increase to spend. An environment variable sets the interval. The job is a timer inside
-the service process on a worker node, and a Postgres lock makes sure only one node polls at a
-time. A final reading when a session ends counts the last stretch. Agents can work for days, so
-spend must not wait for a session to end. The first version only blocks new starts, once a poll
-has recorded that spend reached the budget. A start can still be accepted until the next poll
-records it. See [ADR 0005](adr/0005-spend-is-polled-while-sessions-run.md).
-
-**Planned after that.** When a poll shows spend over budget, the service blocks all new spawns,
-tells every running agent that the cap has been reached and that it should finish its work, and
-ends the agents still running after a five-minute grace period. A **reaper** role that ends
-agents whose context has rotted is a separate, later addition. The interval, timer and lock
-above, and everything in this paragraph, are not yet in an ADR.
-
-**Today.** Spend changes only when a session ends. A session that keeps running costs nothing
-as far as the service knows, so a group can pass its budget by any amount before the service
-notices. The budget stops new starts. It does not stop agents already running.
+The usage poll reads the usage of every running session every five minutes and adds the increase
+to spend, in that connection's unit. A reading from another connection is not added. A run starts
+no new read after four minutes, and it skips the rest of a connection once a read from it fails,
+so a session can wait longer than five minutes for its next reading and a start can be accepted
+against spend that lags. The timer lives in the process that drains the outbox. A row in
+`job_locks` decides which process does the poll when several are up. A final reading when a
+session ends counts the last stretch. A poll of a session that is still running does not clear the
+flag that says its final reading is still owed. A session that has ended is read on every run
+until the platform says it stopped or no longer knows it, and until it owes no platform stop: only
+the end path and the reaper clear that flag. A start is refused once a run records that spend has
+reached the budget. A start can still be accepted until the next run. The budget does not end
+sessions that are already running. See [ADR 0005](adr/0005-spend-is-polled-while-sessions-run.md)
+and [ADR 0007](adr/0007-a-job-lock-keeps-each-background-job-to-one-process.md).
 
 ## Surviving failure
 
@@ -458,14 +455,12 @@ This list is the gap between what the code models and what a running system can 
 1. **Semantic routing is not built.** A session can message one member, or the planner can
    message every member. It cannot yet ask the service to choose the members a question is
    about. See [ADR 0004](adr/0004-peer-messaging-within-a-group.md).
-2. **Spend is not tracked while sessions run.** Usage is read only when a session ends, so a
-   long-running agent can pass the budget unnoticed. The process drains the message outbox on a
-   timer. It does not poll spend. The polling job comes first and only blocks starts. The
-   over-budget response comes after it: tell the running agents to finish, then end them after a
-   five-minute grace period. Delivery to a running session exists. A record of when the grace
-   period ends does not. A reaper that ends an agent for context rot is not built either. The
-   reaper that is built ends sessions whose task has been closed, and it finishes a start or an
-   end that stopped halfway. See [ADR 0005](adr/0005-spend-is-polled-while-sessions-run.md).
+2. **A budget does not end sessions that are already running.** The usage poll records spend
+   while they run and refuses the next start. Telling those sessions to finish, and ending them
+   after a grace period, is not built. A reaper that ends an agent for context rot is not built
+   either. The reaper that is built ends sessions whose task has been closed, and it finishes a
+   start or an end that stopped halfway. See
+   [ADR 0005](adr/0005-spend-is-polled-while-sessions-run.md).
 3. **No real platform.** The only adapter is the simulated one. It lives in the service's
    process, hands out made-up addresses, and records sessions without running an agent. A local
    run starts a planner that never reports. The tests are where a whole group runs.
@@ -474,10 +469,9 @@ This list is the gap between what the code models and what a running system can 
    person as the actor.
 5. **Nothing starts a second planner.** A person starts the planner when opening a group, and
    no policy row lets a session start one. A group whose planner ends cannot get another.
-6. **Platform status is never read.** The adapter's read status, read many and probe are never
-   called, and environment reports have a policy row but no route. So a session's
-   last status is never written, and a replacement works only for a session that is `ended` or
-   `start_failed`.
+6. **The adapter's probe is never called, and environment reports have a policy row but no
+   route.** The usage poll does write `last_status`, so a replacement can see a status of
+   stopped, failed, or unknown.
 7. **Three workspace limits are stored and never checked.** `live_groups`, `groups_per_day` and
    `members_read_all`. Only `live_sessions` is enforced.
 8. **Task dependencies do nothing.** `depends_on` is validated, but HTTP always creates a task
