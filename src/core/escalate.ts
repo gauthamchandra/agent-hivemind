@@ -132,6 +132,7 @@ async function openEscalation(
     openedAt,
     lastSeenAt: openedAt,
     clearedAt: null,
+    notifiedAt: null,
   };
 
   await tx.insertAlert(alert);

@@ -87,6 +87,7 @@ export function parseAlert(row: Row): AlertRecord {
     openedAt: timeText(row, 'opened_at'),
     lastSeenAt: timeText(row, 'last_seen_at'),
     clearedAt: readNullableTime(row.cleared_at),
+    notifiedAt: readNullableTime(row.notified_at),
   };
 }
 
@@ -102,6 +103,7 @@ export function alertParams(alert: AlertRecord): unknown[] {
     alert.openedAt,
     alert.lastSeenAt,
     alert.clearedAt,
+    alert.notifiedAt,
   ];
 }
 
@@ -131,7 +133,7 @@ export function jobSnapshotExtras(input: {
   };
 }
 
-function timeText(row: Row, key: string): string {
+export function timeText(row: Row, key: string): string {
   const value = readNullableTime(row[key]);
 
   if (value === null) throw unreadable();
