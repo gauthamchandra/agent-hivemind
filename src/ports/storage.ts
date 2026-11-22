@@ -1,4 +1,5 @@
 import type {
+  AlertDelivery,
   AlertRecord,
   AlertRule,
   JobName,
@@ -7,6 +8,7 @@ import type {
   SessionJobState,
 } from '@/domain/background-jobs.ts';
 import type {
+  AlertId,
   ConnectionId,
   CopyId,
   GroupId,
@@ -226,6 +228,20 @@ export interface UnitOfWork {
   clearAlert(id: string, now: string): Promise<void>;
   updateAlertReason(id: string, reason: string, now: string): Promise<void>;
   countEscalations(groupId: GroupId, since: string): Promise<number>;
+  /** The open alerts of the rules this release knows. */
+  openAlerts(): Promise<AlertRecord[]>;
+  /** The ids of every open alert, whatever its rule. */
+  openAlertIds(): Promise<string[]>;
+  outstandingAlertDeliveries(): Promise<AlertDelivery[]>;
+  /** Record a delivery as `sending`, or put one that is `sending` or `failed` back to `sending`. Each call counts as one attempt. */
+  recordAlertDeliveryAttempt(input: {
+    id: string;
+    workspaceId: WorkspaceId;
+    alertId: AlertId;
+    now: string;
+  }): Promise<void>;
+  /** Close an outstanding delivery. `sent` also records when the alert was last notified. */
+  finishAlertDelivery(id: string, state: 'sent' | 'failed' | 'expired', now: string): Promise<void>;
   correctCounters(): Promise<string[]>;
 }
 

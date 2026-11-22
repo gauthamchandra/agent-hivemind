@@ -48,6 +48,20 @@ export const startUnresolvedRuns = 6;
 export const escalationCap = 10;
 export const escalationWindowMs = 60 * 60 * 1000;
 
+/** A delivery that failed, or is stuck in `sending`, is sent again after this long, then twice as long after each send. */
+export const notifyRetryMs = 5 * 60 * 1000;
+export const notifyRetryMaxMs = 60 * 60 * 1000;
+/** An alert is first notified only this soon after it opens, and a delivery is retried only this long. */
+export const notifyGiveUpMs = 24 * 60 * 60 * 1000;
+export const reminderCriticalMs = 4 * 60 * 60 * 1000;
+export const reminderNormalMs = 24 * 60 * 60 * 1000;
+/** An alert stops sending reminders this long after it opened. It stays open in the inbox. */
+export const reminderStopMs = 7 * 24 * 60 * 60 * 1000;
+/** A run sends at most this many deliveries, so a burst of alerts is spread over several runs. */
+export const notifyPerRun = 5;
+/** The longest a delivery may take, from the name lookup to the headers of the response. */
+export const webhookTimeoutMs = 10 * 1000;
+
 const jobNames = ['usage_poll', 'reaper', 'housekeeping'] as const;
 export type JobName = (typeof jobNames)[number];
 
@@ -146,6 +160,18 @@ export type AlertRecord = {
   openedAt: string;
   lastSeenAt: string;
   clearedAt: string | null;
+  notifiedAt: string | null;
+};
+
+/** One notification for one alert. The id stays the same across a retry and changes for a reminder. */
+export type AlertDelivery = {
+  id: string;
+  workspaceId: WorkspaceId;
+  alertId: AlertId;
+  state: 'sending' | 'sent' | 'failed' | 'expired';
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type SessionJobState = {

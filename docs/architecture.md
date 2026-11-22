@@ -77,10 +77,11 @@ Code is split into layers, and Biome fails the build when a layer imports one it
 | ----------------- | -------------------------------------------------------------------------------------- | ------------------------------------------ |
 | domain            | Types, ids, errors, and the task transition tables with the function that applies them | Nothing else                               |
 | policy            | The permission table: which role may take which action, where                          | domain                                     |
-| ports             | The interfaces the services need: storage and the platform adapter                     | domain                                     |
+| ports             | The interfaces the services need: storage, the platform adapter and the notifier       | domain                                     |
 | core              | The services, including the usage poll and the reaper, which run under the job lock    | domain, policy, ports                      |
 | storage           | The Postgres store and its migrations                                                  | domain, ports                              |
 | platform adapters | One adapter per agent platform. Only a simulated one exists                            | domain, ports                              |
+| notify            | Sends an alert notification to a webhook                                               | domain, ports                              |
 | http              | Routes, credential checks, error mapping                                               | domain, ports, core                        |
 | cli               | The `hivemind` command                                                                 | Nothing in the service. It talks over HTTP |
 | conformance       | A suite that checks an adapter against the platform contract                           | domain, ports                              |
@@ -94,10 +95,12 @@ flowchart LR
   core --> ports
   storage --> ports
   platform --> ports
+  notify --> ports
   conformance --> ports
   startup -.-> http
   startup -.-> storage
   startup -.-> platform
+  startup -.-> notify
 ```
 
 Every layer except `cli` may also depend on `domain`. Arrows to it are left out of the picture.
@@ -122,6 +125,13 @@ Why it is cut this way:
 The storage port gives a service one transaction with typed reads and writes, including row
 locks. A service never commits. Everything a request changes lands in one transaction, or in a
 deliberate sequence of them (see [Surviving failure](#surviving-failure)).
+
+### Notifier
+
+The notifier port sends one notification, which is one flat object of string values for one alert,
+and either returns or fails. The webhook notifier is the only implementation. It is optional: with
+no address set, nothing is sent. The service sets no timeout around it beyond the 10 seconds a
+delivery gets, and a failure never fails the usage poll that called it.
 
 ### Platform
 
@@ -264,7 +274,8 @@ default the service starts an in-process Postgres that keeps its files in a data
 | `job_locks`            | One row per background job: who holds the lock, its expiry, and its lock id. No workspace column. |
 | `planned_actions`      | An action a job recorded before it called the platform. One open row per target.                  |
 | `session_job_state`    | What the background jobs remember about one session between runs.                                 |
-| `alerts`               | A condition a person must see. The key is the rule and the target, with one open row per key.     |
+| `alerts`               | A condition a person must see. One open row per rule and target, with `notified_at`.              |
+| `alert_deliveries`     | One notification for one alert: its state, its attempts, and its stable delivery id.              |
 
 The database enforces what code must never break:
 
@@ -272,6 +283,8 @@ The database enforces what code must never break:
 - At most one `starting`, `live` or `released` session per task and role, except for
   challengers.
 - Task history is append-only: a trigger rejects every update and delete.
+- An alert has at most one outstanding notification: a unique index on `alert_deliveries` allows one
+  `sending` or `failed` row per alert.
 - A closed task cannot change state: a trigger rejects it.
 - Checks on every enumeration, on `budget > 0`, on `spend >= 0`, and on every counter `>= 0`.
 - There is no check that `spend <= budget`. A later migration dropped it. A final usage reading
@@ -355,6 +368,26 @@ while that connection failed to answer in the run. `hivemind escalate` lets a se
 help. It opens one `escalation` alert for the session, and it is the one request that writes an
 alert. A second call updates the reason, and the poll keeps the alert open until the session ends.
 A group may open ten escalations in an hour.
+
+After it sets the alerts, the poll sends one notification for each alert that is due, through the
+webhook when `HIVEMIND_WEBHOOK_URL` is set. An alert is notified at most once per reminder
+interval, even if it clears and returns, because a new row for the same rule and target inherits
+when the earlier rows were last notified, as long as that was less than one interval ago. So a new
+incident soon after a notified one waits out the rest of the interval, and one that returns later
+is notified at once as a new alert. The interval is four hours for a critical alert and a
+day otherwise, and reminders stop after a week. An alert that was not notified within a day of
+opening is never first notified. A run sends at most five notifications, so a burst of alerts is
+spread over several runs, and each send is cut off after 10 seconds. A notification that fails is
+sent again after five minutes, then after twice as long, up to an hour, and it is dropped when it
+is a day old or its alert is too old for it. With no webhook the alert row is the inbox. See
+[ADR 0007](adr/0007-a-job-lock-keeps-each-background-job-to-one-process.md) and
+[ADR 0008](adr/0008-a-notification-is-one-signed-delivery-for-one-alert.md).
+
+The body is a flat object of strings, because a Slack Workflow webhook trigger takes only flat
+key-value pairs. Its keys, signature and headers are in the
+[README](../README.md#receive-alert-notifications). The reason of an escalation is free text that
+the session wrote and is redacted only for this service's own token formats, so treat the webhook
+as an internal channel.
 
 ## Surviving failure
 
@@ -496,6 +529,6 @@ This list is the gap between what the code models and what a running system can 
     exercised by one CI job, but startup always uses the in-process Postgres.
 11. **Sign-in is a stub.** The `accounts` table exists, and a person's account id is always
     null.
-12. **Nobody is told about an alert.** An alert is a row. Notifying a person, and a console view of
-    the alerts, are not built. An alert about a failing connection needs the daily probe, which is
-    not built either.
+12. **No console and no way to acknowledge an alert.** An alert is a row, and a webhook receives a
+    notification for it, but a console view of the alerts and a way to mark one as read are not
+    built. An alert about a failing connection needs the daily probe, which is not built either.
