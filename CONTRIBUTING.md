@@ -58,7 +58,8 @@ as the first code that depends on it, or before.
 
 A pull request that builds on an ADR accepted earlier needs no new one when that ADR already
 covers the decision. It names the ADR in its description. If the change goes beyond what the
-ADR decided, update that ADR or add a new one.
+ADR decided, add a new ADR that builds on it. An accepted ADR is not changed, and no addendum is
+appended to it. The one change allowed is the `Superseded by` line, when a later ADR supersedes it.
 
 Write an ADR when the change:
 
