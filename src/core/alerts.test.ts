@@ -775,21 +775,32 @@ test('a wait 30 minutes past its deadline opens a second alert and both clear wh
   expect(await openAlerts(ctx.deps, 'wait_overdue')).toHaveLength(0);
 });
 
-test('two sessions waiting on each other open one cycle alert that clears when one is answered', async () => {
+test('two sessions waiting on each other open no alert, because each can still answer the other', async () => {
   const ctx = await team();
   const implementer = await startImplementer(ctx);
-  const plannersQuestion = await ask(ctx, ctx.planner, implementer, 'ask-1', maxWaitSeconds);
 
-  await poll(ctx);
-  expect(await openAlerts(ctx.deps, 'wait_cycle')).toHaveLength(0);
-
+  await ask(ctx, ctx.planner, implementer, 'ask-1', maxWaitSeconds);
   await ask(ctx, implementer, ctx.planner, 'ask-2', maxWaitSeconds);
   await poll(ctx);
-  expect(await openAlerts(ctx.deps, 'wait_cycle')).toHaveLength(1);
 
-  await answer(ctx, implementer, ctx.planner, plannersQuestion.message.id, 'answer-1');
+  expect(await openAlertRules(ctx.deps)).toEqual([]);
+});
+
+test('an open alert of the removed wait_cycle rule is left as it is and does not stop the poll', async () => {
+  const ctx = await team();
+
+  await ctx.db.query(
+    `INSERT INTO alerts (
+       id, workspace_id, group_id, rule, target_id, severity, reason, opened_at, last_seen_at
+     ) VALUES ('alr_wait_cycle', $1, $2, 'wait_cycle', $2, 'critical',
+               'Sessions are waiting on each other.', now(), now())`,
+    [defaultWorkspaceId, ctx.opened.group.id]
+  );
   await poll(ctx);
-  expect(await openAlerts(ctx.deps, 'wait_cycle')).toHaveLength(0);
+
+  expect(await openAlertRules(ctx.deps)).toEqual([]);
+  const stillOpen = await ctx.db.query('SELECT id FROM alerts WHERE cleared_at IS NULL');
+  expect(stillOpen.rows).toEqual([{ id: 'alr_wait_cycle' }]);
 });
 
 test('a root whose children all finished without a failure raises no alert', async () => {
@@ -943,6 +954,12 @@ async function openAlerts(deps: TestDeps, rule: AlertRule) {
   const snapshot = await deps.store.transact(tx => tx.loadJobSnapshot());
 
   return snapshot.alerts.filter(alert => alert.rule === rule);
+}
+
+async function openAlertRules(deps: TestDeps) {
+  const snapshot = await deps.store.transact(tx => tx.loadJobSnapshot());
+
+  return snapshot.alerts.map(alert => alert.rule);
 }
 
 const minuteMs = 60 * 1000;

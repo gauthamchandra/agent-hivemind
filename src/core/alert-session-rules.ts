@@ -13,7 +13,6 @@ import {
   waitingForPersonMs,
 } from '@/domain/background-jobs.ts';
 import { compareDecimal, decimalFromNumber } from '@/domain/decimal.ts';
-import type { WaitRecord } from '@/domain/message.ts';
 import type { SessionLife, SessionRecord, Task } from '@/domain/model.ts';
 import { isClosedState } from '@/domain/model.ts';
 
@@ -162,51 +161,4 @@ function above(usage: string, ceiling: number): boolean {
   if (!Number.isFinite(ceiling) || ceiling < 0) return false;
 
   return compareDecimal(usage, decimalFromNumber(ceiling)) > 0;
-}
-
-export function cycleGroups(
-  waits: readonly WaitRecord[],
-  sessions: Map<string, SessionRecord>
-): string[] {
-  const next = new Map<string, string[]>();
-
-  for (const wait of waits) {
-    const list = next.get(wait.waiting_session_id) ?? [];
-
-    list.push(wait.awaited_session_id);
-    next.set(wait.waiting_session_id, list);
-  }
-
-  const color = new Map<string, number>();
-  const groups = new Set<string>();
-
-  const visit = (id: string, stack: string[]): void => {
-    color.set(id, 1);
-    stack.push(id);
-
-    for (const step of next.get(id) ?? []) {
-      const seen = color.get(step) ?? 0;
-
-      if (seen === 1) {
-        const cycle = stack.slice(stack.indexOf(step));
-
-        if (cycle.length >= 2) {
-          for (const member of cycle) {
-            const session = sessions.get(member);
-
-            if (session) groups.add(session.group_id);
-          }
-        }
-      } else if (seen === 0) visit(step, stack);
-    }
-
-    stack.pop();
-    color.set(id, 2);
-  };
-
-  for (const id of next.keys()) {
-    if ((color.get(id) ?? 0) === 0) visit(id, []);
-  }
-
-  return [...groups];
 }

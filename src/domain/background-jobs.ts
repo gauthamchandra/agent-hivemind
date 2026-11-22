@@ -62,7 +62,6 @@ export const alertRules = [
   'session_idle_on_open_task',
   'wait_expired',
   'wait_overdue',
-  'wait_cycle',
   'task_stalled',
   'task_without_session',
   'budget_80',

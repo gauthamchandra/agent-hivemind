@@ -9,7 +9,6 @@ const severity: Record<AlertRule, AlertSeverity> = {
   session_idle_on_open_task: 'normal',
   wait_expired: 'normal',
   wait_overdue: 'critical',
-  wait_cycle: 'critical',
   task_stalled: 'normal',
   task_without_session: 'normal',
   budget_80: 'normal',

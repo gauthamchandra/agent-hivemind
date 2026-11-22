@@ -1,4 +1,4 @@
-import { considerSession, cycleGroups } from '@/core/alert-session-rules.ts';
+import { considerSession } from '@/core/alert-session-rules.ts';
 import { held, push } from '@/core/alert-severity.ts';
 import type {
   AlertRecord,
@@ -60,11 +60,6 @@ export function desiredAlerts(input: Evaluation): DesiredAlert[] {
 
   for (const session of input.sessions) considerSession(input, indexes, session, desired);
   for (const wait of input.waits) considerWait(input, indexes, wait, desired);
-  for (const groupId of cycleGroups(input.waits, indexes.sessions)) {
-    const group = indexes.groups.get(groupId);
-
-    if (group) push(desired, 'wait_cycle', group.id, group.workspace_id, group.id, null);
-  }
 
   for (const orphan of input.orphanEnded) {
     const group = indexes.groups.get(orphan.groupId);
