@@ -260,7 +260,9 @@ can finish. The row's `life` does not change until step 2, and the gap before it
 While `end_requested_at` is set and `life` is not yet `ended`, the session's token works for
 reads and for the two end routes. Every other request answers `session_not_active`. If the
 platform stop fails, the answer is `unavailable` ("The platform did not stop the session")
-and either end route can be retried.
+and either end route can be retried. A `not_found` answer from the platform's end call is a
+stop that already finished, so the pending stop is cleared the same way a successful stop is.
+The usage poll does not clear that flag.
 
 Who may end a session is in the [policy table](architecture.md#who-may-do-what). In short: a
 planner, challenger or verifier may end itself at any time. An implementer or reviewer may

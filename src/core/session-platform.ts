@@ -4,7 +4,11 @@ import type { SessionRecord } from '@/domain/model.ts';
 import { PlatformError } from '@/domain/platform.ts';
 import type { FindResult, Platforms } from '@/ports/platform.ts';
 
-/** Stop a platform session. A platform failure is unavailable, not a lost row. */
+/**
+ * Stop a platform session.
+ * A platform that does not know the session has already stopped it.
+ * Any other platform failure is unavailable, not a lost row.
+ */
 export async function endOnPlatform(
   deps: ServiceDeps,
   platforms: Platforms,
@@ -16,11 +20,11 @@ export async function endOnPlatform(
   try {
     await handle.adapter.end(handle.connection, platformSessionRef);
   } catch (error) {
-    if (error instanceof PlatformError) {
+    if (!(error instanceof PlatformError)) throw error;
+
+    if (error.errorClass !== 'not_found') {
       throw new HivemindError('unavailable', 'The platform did not stop the session.');
     }
-
-    throw error;
   }
 
   await deps.store.transact(async tx => {

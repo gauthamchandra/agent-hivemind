@@ -233,7 +233,8 @@ export async function endFor(
   }
 }
 
-// endOnPlatform turns a PlatformError into HivemindError('unavailable'), so that is what a failed stop raises.
+// endOnPlatform turns a failed platform stop into HivemindError('unavailable').
+// A not_found end is already stopped, so it does not raise and the pending stop clears.
 export function isPlatformStopFailure(error: unknown): boolean {
   return error instanceof HivemindError && error.code === 'unavailable';
 }
