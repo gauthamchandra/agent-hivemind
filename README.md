@@ -331,6 +331,7 @@ alert that is due. With neither set, nothing is sent and the alert row is the in
 | [`docs/state-machines.md`](docs/state-machines.md) | Every task, verification-mode, session and group transition.                     |
 | [`docs/adr/`](docs/adr/)                           | Decisions that were argued and settled, and why. One file per decision.          |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md)               | What "done" looks like, the pull request process, sign-off.                      |
+| [`docs/releases.md`](docs/releases.md)             | Version tags, the changelog, and how to check out a release.                     |
 | [`AGENTS.md`](AGENTS.md)                           | Rules for coding agents that work on this repository.                            |
 
 ## Tooling for coding agents working on this repo
