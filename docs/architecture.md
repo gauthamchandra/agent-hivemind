@@ -296,6 +296,8 @@ migration and validated in a later one, so no single file holds a long lock whil
 release is still serving. An index on an existing table is built `CONCURRENTLY` in its own
 `.no-transaction.sql` file, which the runner executes one statement at a time. See
 [ADR 0009](adr/0009-a-migration-that-cannot-run-in-a-transaction-lives-in-its-own-file.md).
+One process runs the pending files at a time. See
+[ADR 0010](adr/0010-a-migration-lock-keeps-pending-migrations-to-one-process.md).
 
 ## Capacity and money
 
