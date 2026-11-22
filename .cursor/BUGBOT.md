@@ -46,6 +46,16 @@ Also flag `NodeJS.*` namespace types for timers and APIs that have Web/`Bun.*` e
 - Tests with no meaningful `expect()`
 - Assertion-restating comments
 
+### Migrations
+
+- `CREATE INDEX` without `CONCURRENTLY` on a table that already exists (an index on a table the
+  same file creates is fine)
+- `CONCURRENTLY` in a file whose name does not end in `.no-transaction.sql`, or any statement other
+  than a concurrent index build or drop in a file whose name does
+- `CREATE INDEX CONCURRENTLY` with no `DROP INDEX CONCURRENTLY IF EXISTS` of the same index before
+  it in the file, because a failed build leaves an invalid index that `IF NOT EXISTS` skips
+  ([ADR 0009](../docs/adr/0009-a-migration-that-cannot-run-in-a-transaction-lives-in-its-own-file.md))
+
 ### Decisions
 
 Flag a pull request that meets the ADR bar in
