@@ -309,7 +309,11 @@ finished gets `session_not_active`.
 ## Groups
 
 A group is `open` until its root task closes, then `closed`. A closed group refuses new
-starts and resumes with `group_closed`. Nothing reopens it.
+starts and resumes with `group_closed`. Nothing reopens it. Housekeeping removes it 90 days
+after `closed_at`, or after the retention the process was started with, when no session is
+`starting`, `live`, or `released` and none owes a final
+reading or a platform stop. Its task history is deleted in that transaction. Every other delete
+of a task event is rejected.
 
 A group also closes when its planner cannot start. Opening a group creates the group and the
 root task, then starts the planner. If the platform refuses that start, or the start throws

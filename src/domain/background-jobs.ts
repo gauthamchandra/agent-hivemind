@@ -20,6 +20,18 @@ export const jobLockCheckMs = 60 * 1000;
 
 export const usagePollDeadlineMs = 4 * 60 * 1000;
 export const reaperDeadlineMs = 10 * 60 * 1000;
+/** How often housekeeping may start. */
+export const housekeepingIntervalMs = 24 * 60 * 60 * 1000;
+/**
+ * A run stops between groups once this passes.
+ * It is the job lock. Each group's write holds that lock id.
+ */
+export const housekeepingDeadlineMs = jobLockMs;
+/**
+ * The closed-group retention when startup is not given another.
+ * The housekeeping run reads the duration it was given, not this constant.
+ */
+export const closedGroupRetentionMs = 90 * 24 * 60 * 60 * 1000;
 export const recordsPerWorkspace = 200;
 
 export const closedTaskGraceMs = 60 * 60 * 1000;

@@ -11,6 +11,8 @@ export type ServiceDeps = {
   ids: IdFactory;
   /** Encrypts replayed responses. It comes from configuration and is not stored. */
   responseKey: string;
+  /** How long a closed group is kept. Startup resolves this once. */
+  closedGroupRetentionMs: number;
 };
 
 export type ReportActor =

@@ -4,7 +4,10 @@ import { drainOutbox } from '@/core/delivery.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
 import { openInstallation } from '@/core/installation.ts';
 import { createWorkerId } from '@/core/job-run.ts';
-import { jobLockCheckMs } from '@/domain/background-jobs.ts';
+import {
+  closedGroupRetentionMs as defaultClosedGroupRetentionMs,
+  jobLockCheckMs,
+} from '@/domain/background-jobs.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import { type ConnectionId, createIds, defaultWorkspaceId } from '@/domain/ids.ts';
 import { formatTime } from '@/domain/time.ts';
@@ -14,6 +17,7 @@ import { createSimulatedPlatform } from '@/platform/simulated/adapter.ts';
 import { systemClock } from '@/ports/clock.ts';
 import type { Platforms } from '@/ports/platform.ts';
 import { systemRandom } from '@/ports/random.ts';
+import { closedGroupRetentionFrom } from '@/service-config.ts';
 import { openPgliteStore } from '@/storage/postgres/store.ts';
 
 /**
@@ -23,6 +27,8 @@ export async function startHivemind(options?: {
   port?: number;
   dataDir?: string | null;
   responseKey?: string;
+  /** Already resolved: flag, then the configured value, then 90 days. */
+  closedGroupRetentionMs?: number;
 }): Promise<{
   url: string;
   port: number;
@@ -39,6 +45,7 @@ export async function startHivemind(options?: {
     random: systemRandom,
     ids: createIds(systemClock, systemRandom),
     responseKey: configuredResponseKey(options?.responseKey),
+    closedGroupRetentionMs: options?.closedGroupRetentionMs ?? defaultClosedGroupRetentionMs,
   };
 
   await store.migrate();
@@ -151,6 +158,10 @@ if (import.meta.main) {
   const started = await startHivemind({
     ...(port === undefined ? {} : { port }),
     dataDir: process.env.HIVEMIND_DATA ?? '.hivemind',
+    closedGroupRetentionMs: closedGroupRetentionFrom({
+      args: process.argv.slice(2),
+      env: process.env,
+    }),
   });
 
   if (started.bootstrapSecret) {

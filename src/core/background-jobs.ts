@@ -1,4 +1,5 @@
 import type { ServiceDeps } from '@/core/deps.ts';
+import { runHousekeeping } from '@/core/housekeeping.ts';
 import type { JobRunResult, RunOptions } from '@/core/job-run.ts';
 import { runReaper } from '@/core/reaper.ts';
 import { runUsagePoll } from '@/core/usage-poll.ts';
@@ -18,6 +19,7 @@ export async function runDueJobs(
   const runs = await Promise.allSettled([
     runUsagePoll(deps, platforms, options),
     runReaper(deps, platforms, options),
+    runHousekeeping(deps, options),
   ]);
   const failures = runs.flatMap(run => (run.status === 'rejected' ? [run.reason] : []));
 
