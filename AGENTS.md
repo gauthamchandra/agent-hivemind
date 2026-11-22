@@ -117,7 +117,14 @@ design questions, do not re-ask — proceed.
 Migrations are forward only and zero-downtime. Do not add a down migration, and do not call rollback in production. Correct a released change with a new forward migration. Add a constraint `NOT VALID` in one
 migration and validate it in a later one, never in the same file.
 
-The decision is recorded in [docs/adr/0001-forward-only-sql-migrations.md](docs/adr/0001-forward-only-sql-migrations.md).
+Build an index on a table that already exists with `CREATE INDEX CONCURRENTLY`, in its own file named
+`NNN_name.no-transaction.sql`, and put `DROP INDEX CONCURRENTLY IF EXISTS` for the same index before it.
+Never use a plain `CREATE INDEX` on an existing table. An index on a table the same migration creates
+stays in the normal file. The runner runs a `.no-transaction.sql` file one statement per call, split at
+the `--> statement-breakpoint` lines, and `migrate.test.ts` checks the file's shape.
+
+The decisions are recorded in [docs/adr/0001-forward-only-sql-migrations.md](docs/adr/0001-forward-only-sql-migrations.md)
+and [docs/adr/0009-a-migration-that-cannot-run-in-a-transaction-lives-in-its-own-file.md](docs/adr/0009-a-migration-that-cannot-run-in-a-transaction-lives-in-its-own-file.md).
 
 ## Bun runtime
 

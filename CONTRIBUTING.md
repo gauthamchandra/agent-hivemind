@@ -31,8 +31,12 @@ they both describe.
   database runs one transaction at a time and cannot show a race.
 - **Schema conventions.** A timestamp column is named `<field>_at` or `<field>_until`, and every
   table has a `COMMENT ON TABLE` that says what it holds. A constraint is added `NOT VALID` in
-  one migration and validated in a later one. `schema-conventions.test.ts` fails on a new
-  violation. Its two lists of older exceptions only shrink.
+  one migration and validated in a later one. An index on an existing table is built with
+  `CREATE INDEX CONCURRENTLY` in its own `.no-transaction.sql` file, after a
+  `DROP INDEX CONCURRENTLY IF EXISTS` of the same index
+  ([ADR 0009](docs/adr/0009-a-migration-that-cannot-run-in-a-transaction-lives-in-its-own-file.md)).
+  `schema-conventions.test.ts` fails on a new violation. Its two lists of older exceptions only
+  shrink.
 - **Docs travel with the change.** A change to a transition row, a policy rule, or a session's
   life updates [`docs/state-machines.md`](docs/state-machines.md) in the same pull request. A
   change to a layer boundary or a port updates [`docs/architecture.md`](docs/architecture.md).

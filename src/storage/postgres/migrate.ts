@@ -18,10 +18,25 @@ export function executePostgres(query: (sql: string) => Promise<unknown>): Execu
   return sql => query(sql);
 }
 
-export async function applyMigrations(execute: ExecuteSql): Promise<void> {
+const noTransactionSuffix = '.no-transaction.sql';
+
+/**
+ * Apply every migration file that is not recorded yet, in name order.
+ *
+ * <p>A file runs as one script, so PostgreSQL wraps it in a transaction and a failure leaves
+ * nothing behind. {@code CREATE INDEX CONCURRENTLY} cannot run inside a transaction, so a file
+ * named {@code *.no-transaction.sql} runs one statement per call instead, split at the
+ * {@code --> statement-breakpoint} lines. Such a file is not atomic: after a failure it runs again
+ * from its first statement, so every statement in it must be safe to repeat. Nothing serializes
+ * two processes that start together, so both can run the same file. See ADR 0009.
+ */
+export async function applyMigrations(
+  execute: ExecuteSql,
+  directory = migrationsDirectory
+): Promise<void> {
   const umzug = new Umzug<MigrationContext>({
     migrations: {
-      glob: ['*.sql', { cwd: migrationsDirectory }],
+      glob: ['*.sql', { cwd: directory }],
       resolve: ({ name, path, context }) => {
         if (path === undefined) {
           throw new Error(`Migration ${name} has no file.`);
@@ -32,7 +47,7 @@ export async function applyMigrations(execute: ExecuteSql): Promise<void> {
           up: async () => {
             const sql = await readFile(path, 'utf8');
 
-            await context.execute(sql);
+            await executeMigration(context.execute, name, sql);
           },
         };
       },
@@ -43,6 +58,24 @@ export async function applyMigrations(execute: ExecuteSql): Promise<void> {
   });
 
   await umzug.up();
+}
+
+async function executeMigration(execute: ExecuteSql, name: string, sql: string): Promise<void> {
+  if (!name.endsWith(noTransactionSuffix)) {
+    await execute(sql);
+
+    return;
+  }
+
+  for (const statement of statementsOfNoTransactionFile(sql)) await execute(statement);
+}
+
+/** The statements of a no-transaction file: the text between `--> statement-breakpoint` lines. */
+export function statementsOfNoTransactionFile(sql: string): string[] {
+  return sql
+    .split(/^--> statement-breakpoint[ \t\r]*$/m)
+    .map(statement => statement.trim())
+    .filter(statement => statement !== '');
 }
 
 function historyStorage(): UmzugStorage<MigrationContext> {
