@@ -99,6 +99,7 @@ export function openPgliteStore(database: PGlite): Store {
     },
     async () => {
       await database.waitReady;
+      // One connection in this process, so there is no migration lock. See ADR 0010.
       await applyMigrations(executePglite(database));
     }
   );

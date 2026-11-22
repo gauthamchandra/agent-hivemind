@@ -27,8 +27,9 @@ const noTransactionSuffix = '.no-transaction.sql';
  * nothing behind. {@code CREATE INDEX CONCURRENTLY} cannot run inside a transaction, so a file
  * named {@code *.no-transaction.sql} runs one statement per call instead, split at the
  * {@code --> statement-breakpoint} lines. Such a file is not atomic: after a failure it runs again
- * from its first statement, so every statement in it must be safe to repeat. Nothing serializes
- * two processes that start together, so both can run the same file. See ADR 0009.
+ * from its first statement, so every statement in it must be safe to repeat. This function takes
+ * no lock. The PostgreSQL store holds a session advisory lock around the call, and releases it
+ * on success or failure. PGlite does not take that lock. See ADR 0009 and ADR 0010.
  */
 export async function applyMigrations(
   execute: ExecuteSql,
