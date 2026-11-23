@@ -249,7 +249,7 @@ planner on the root task. Opening a group is the only place that starts a planne
 [who may fail a task](state-machines.md#who-may-fail-a-task) for the whole list.
 
 Each session is told its role in its prompt, along with the group, the task, the verification
-mode, who started it, seven standing rules, and the starter's instructions. It names the
+mode, who started it, six standing rules, and the starter's instructions. It names the
 changeset only for the implementer, reviewer and verifier. Because a prompt can be ignored, the
 service checks every report against this table and the transition table anyway.
 
