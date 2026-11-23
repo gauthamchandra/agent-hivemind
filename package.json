@@ -1,6 +1,6 @@
 {
   "name": "agent-hivemind",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Bun-powered agent hivemind application",
   "module": "src/index.ts",
   "type": "module",
