@@ -83,6 +83,10 @@ const words: Record<AlertRule, AlertWords> = {
     summary: 'Spend cannot be read for a group.',
     action: 'Restore usage readings or allow the group to run without them.',
   },
+  connection_failing: {
+    summary: 'A connection failed its daily probe.',
+    action: 'Check the connection and the platform.',
+  },
 };
 
 /** What an alert means and what a person should do about it, in words for a notification. */

@@ -23,6 +23,7 @@ const severity: Record<AlertRule, AlertSeverity> = {
   orphan_platform_session_ended: 'normal',
   instruction_relayed: 'normal',
   spend_unknown: 'normal',
+  connection_failing: 'critical',
 };
 
 export function severityOf(rule: AlertRule): AlertSeverity {

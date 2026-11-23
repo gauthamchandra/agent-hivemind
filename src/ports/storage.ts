@@ -2,6 +2,7 @@ import type {
   AlertDelivery,
   AlertRecord,
   AlertRule,
+  ConnectionJobState,
   JobName,
   JobSnapshot,
   PlannedAction,
@@ -221,6 +222,9 @@ export interface UnitOfWork {
   openPlannedActions(job: JobName): Promise<PlannedAction[]>;
   finishPlannedAction(id: string, job: JobName, lockId: number, now: string): Promise<boolean>;
   saveSessionJobState(jobState: SessionJobState, scope: 'usage_poll' | 'reaper'): Promise<void>;
+  /** Every connection, in id order. */
+  listConnections(): Promise<{ id: ConnectionId; workspaceId: WorkspaceId }[]>;
+  saveConnectionJobState(state: ConnectionJobState): Promise<void>;
   loadJobSnapshot(): Promise<JobSnapshot>;
   openAlertByKey(rule: AlertRule, targetId: string): Promise<AlertRecord | null>;
   insertAlert(alert: AlertRecord): Promise<void>;
