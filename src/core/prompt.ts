@@ -2,7 +2,6 @@ import type { SessionId } from '@/domain/ids.ts';
 import type { Group, SessionRole, Task } from '@/domain/model.ts';
 
 const standingRules = [
-  'Report your environment before you start work. Report your environment again immediately before you report your task as complete.',
   'Coordinate only through the service, with the command-line tool. If the service cannot be reached after the tool retries, stop and say so in your own platform session, where the owner can see it. Do not start platform sessions yourself, and do not coordinate with members by any other channel.',
   'Only the reviewer of a task marks its pull request as ready for review, and only when it approves the task. No other session changes whether a pull request is a draft. No session reverses such a change. A person can mark a pull request ready early: leave it ready and continue the work.',
   'Each delivered message starts with a header that names the sender role, session and task. Do not start a message body with a role or an identifier. Start with the substance.',

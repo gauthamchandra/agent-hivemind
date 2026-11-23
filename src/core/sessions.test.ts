@@ -666,13 +666,14 @@ test('a repeated end stops a platform session before it clears pending usage', a
   expect(again.usage).toBe('4');
 });
 
-test('a prompt does not stop when an environment report cannot be sent', async () => {
+test('a prompt does not ask for an environment report this phase cannot send', async () => {
   const ctx = await withPlanner();
   const prompt = requirePresent(
     ctx.simulated.prompts()[0],
     'the platform should have been prompted'
   );
 
+  expect(prompt).not.toContain('Report your environment');
   expect(prompt).not.toContain('If the report fails, stop');
   expect(prompt).not.toContain('do not report completion');
 });
