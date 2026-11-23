@@ -144,7 +144,7 @@ whatever hosts the agent sessions.
 | find by key            | Answers "did a start with this key create a session?": found, absent, or inconclusive.                     | Yes, in recovery          |
 | end                    | Stops a session. Repeating it must be safe.                                                                | Yes                       |
 | read usage             | Returns the session's cumulative usage. It must never go down.                                             | Yes                       |
-| probe                  | Lists the capabilities the connection has.                                                                 | No                        |
+| probe                  | Lists the capabilities the connection has. Housekeeping calls it once a day.                               | Yes                       |
 | read status, read many | Read a session's neutral status: working, idle, waiting for a person, suspended, stopped, failed, unknown. | Status, on usage poll     |
 | send                   | Messages a running session. Results: accepted, busy, rate limited, gone.                                   | No                        |
 | suspend, describe      | Pause a session. Describe the adapter.                                                                     | Suspend, by the reaper    |
@@ -274,6 +274,7 @@ default the service starts an in-process Postgres that keeps its files in a data
 | `job_locks`            | One row per background job: who holds the lock, its expiry, and its lock id. No workspace column. |
 | `planned_actions`      | An action a job recorded before it called the platform. One open row per target.                  |
 | `session_job_state`    | What the background jobs remember about one session between runs.                                 |
+| `connection_job_state` | Whether a connection's last probe failed.                                                         |
 | `alerts`               | A condition a person must see. One open row per rule and target, with `notified_at`.              |
 | `alert_deliveries`     | One notification for one alert: its state, its attempts, and its stable delivery id.              |
 
@@ -367,7 +368,10 @@ for a condition a person must see, such as a session that looks stopped while it
 session waiting for a person, spend at 80 percent of the budget, or a task with no activity for
 hours. The key is the rule and the target. The poll opens a missing alert, keeps an open one, and
 clears one whose condition ended. A rule that needs the platform's answer neither opens nor clears
-while that connection failed to answer in the run. `hivemind escalate` lets a session ask for
+while that connection failed to answer in the run. `connection_failing` is the exception: housekeeping
+opens it when a connection's probe fails and clears it when a later probe succeeds, and the poll
+leaves it alone, because the poll did not probe. It is critical, so a webhook reminds a person every
+four hours and sends it ahead of a normal alert. `hivemind escalate` lets a session ask for
 help. It opens one `escalation` alert for the session, and it is the one request that writes an
 alert. A second call updates the reason, and the poll keeps the alert open until the session ends.
 A group may open ten escalations in an hour.
@@ -396,8 +400,12 @@ Housekeeping runs every 24 hours under its own job lock. A closed group is remov
 it closed, or after the retention the process was started with, and only when no session is still
 starting, live, or released, and none still owes a
 final reading or a platform stop. Its tasks, history, messages, alerts, deliveries, and planned
-actions go in that same transaction, cleared alerts included. A run stops between groups once four
-minutes have passed. Each group's write holds the lock id.
+actions go in that same transaction, cleared alerts included. The same run then probes each
+connection. A failed probe opens one critical `connection_failing` alert for that connection, and
+records the failure on the connection's job state; a later success clears the alert. The result is
+saved only while the run still holds the lock id. A run stops between groups, and then between
+connections, once four minutes have passed. Each group's write, and each probe result, holds that
+lock id.
 See [ADR 0007](adr/0007-a-job-lock-keeps-each-background-job-to-one-process.md).
 
 ## Surviving failure
@@ -526,9 +534,8 @@ This list is the gap between what the code models and what a running system can 
    person as the actor.
 5. **Nothing starts a second planner.** A person starts the planner when opening a group, and
    no policy row lets a session start one. A group whose planner ends cannot get another.
-6. **The adapter's probe is never called, and environment reports have a policy row but no
-   route.** The usage poll does write `last_status`, so a replacement can see a status of
-   stopped, failed, or unknown.
+6. **Environment reports have a policy row but no route.** The usage poll does write `last_status`,
+   so a replacement can see a status of stopped, failed, or unknown.
 7. **Three workspace limits are stored and never checked.** `live_groups`, `groups_per_day` and
    `members_read_all`. Only `live_sessions` is enforced.
 8. **Task dependencies do nothing.** `depends_on` is validated, but HTTP always creates a task
@@ -542,4 +549,4 @@ This list is the gap between what the code models and what a running system can 
     null.
 12. **No console and no way to acknowledge an alert.** An alert is a row, and a webhook receives a
     notification for it, but a console view of the alerts and a way to mark one as read are not
-    built. An alert about a failing connection needs the daily probe, which is not built either.
+    built.

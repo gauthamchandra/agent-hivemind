@@ -342,3 +342,8 @@ ago. The interval is four hours for a critical alert and a day otherwise. A new 
 same rule and target inherits when the earlier rows were last notified, so a condition that clears
 and returns is notified at most once per interval. A run sends at most five deliveries, critical
 first and then the alert open longest.
+
+Housekeeping opens one critical `connection_failing` alert when a connection's probe fails, and
+clears it when a later probe succeeds. The usage poll does not open or clear that alert. A
+connection the run does not reach, because the four-minute deadline has passed, keeps the alert it
+already has.

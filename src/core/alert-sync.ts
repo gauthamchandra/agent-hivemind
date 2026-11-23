@@ -75,6 +75,9 @@ export async function syncAlerts(
 
     for (const existing of snapshot.alerts) {
       if (keys.has(alertKey(existing.rule, existing.targetId))) continue;
+
+      // The daily probe opens and clears this alert. This run did not probe, so it must not clear it.
+      if (existing.rule === 'connection_failing') continue;
       if (skipStatusRule(snapshot, existing.rule, existing.targetId, unreliable)) continue;
 
       await tx.clearAlert(existing.id, now);

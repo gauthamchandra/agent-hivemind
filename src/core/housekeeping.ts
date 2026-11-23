@@ -1,20 +1,23 @@
+import { probeConnections } from '@/core/connection-probe.ts';
 import type { ServiceDeps } from '@/core/deps.ts';
 import { type JobRunResult, type RunOptions, takeJob } from '@/core/job-run.ts';
 import { housekeepingDeadlineMs, housekeepingIntervalMs } from '@/domain/background-jobs.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import type { GroupId } from '@/domain/ids.ts';
 import { formatTime } from '@/domain/time.ts';
+import type { Platforms } from '@/ports/platform.ts';
 
 /**
- * Remove closed groups that have passed their retention and whose sessions are settled.
+ * Remove closed groups that have passed their retention, then probe each connection.
  *
- * <p>Each group is one transaction under this run's lock id. The run stops between groups once
- * {@link housekeepingDeadlineMs} has passed, and the next run is 24 hours later. A session that
- * is starting, live, or released, or that still owes a final reading or a platform stop, keeps
- * its group.
+ * <p>Each group, and each probe result, is one transaction under this run's lock id. The run
+ * stops between groups, and between connections, once {@link housekeepingDeadlineMs} has passed.
+ * The next run is 24 hours later. A session that is starting, live, or released, or that still
+ * owes a final reading or a platform stop, keeps its group.
  */
 export async function runHousekeeping(
   deps: ServiceDeps,
+  platforms: Platforms,
   options: RunOptions
 ): Promise<JobRunResult> {
   const lockId = await takeJob(deps, 'housekeeping', options.workerId, housekeepingIntervalMs);
@@ -30,6 +33,8 @@ export async function runHousekeeping(
 
     await removeOne(deps, groupId, lockId, closedBefore);
   }
+
+  await probeConnections(deps, platforms, options, lockId, started);
 
   return { ran: true, lockId };
 }

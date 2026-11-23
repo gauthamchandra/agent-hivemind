@@ -27,7 +27,7 @@ test('a closed group is removed 90 days after it closed, with its history and jo
   await insertJobRows(ctx, ctx.opened.group.id, ctx.planner.id, ctx.opened.root.id);
   await insertClearedAlert(ctx, kept.group.id, 'kept-alert', 'kept-delivery');
 
-  const run = await runHousekeeping(ctx.deps, { workerId: 'worker' });
+  const run = await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   expect(run).toEqual({ ran: true, lockId: 1 });
   expect(await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id)).toBeNull();
@@ -111,7 +111,7 @@ test('a closed group younger than 90 days keeps its cleared alert and delivery',
   await insertClearedAlert(ctx, ctx.opened.group.id, 'young-alert', 'young-delivery');
   await insertPlannedAction(ctx, ctx.planner.id, 'young-action');
 
-  const run = await runHousekeeping(ctx.deps, { workerId: 'worker' });
+  const run = await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   expect(run.ran).toBe(true);
   expect(await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id)).not.toBeNull();
@@ -128,7 +128,7 @@ test('an open group is kept even when a closed time is already 90 days ago', asy
     status: 'open',
   });
 
-  await runHousekeeping(ctx.deps, { workerId: 'worker' });
+  await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   const group = await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id);
 
@@ -144,7 +144,7 @@ for (const life of ['starting', 'live', 'released'] as const) {
       life,
     });
 
-    const run = await runHousekeeping(ctx.deps, { workerId: 'worker' });
+    const run = await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
     expect(await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id)).not.toBeNull();
     expect(await ctx.deps.store.session(defaultWorkspaceId, ctx.planner.id)).toMatchObject({
@@ -163,7 +163,7 @@ test('a session that still owes a final reading keeps the closed group', async (
     finalUsagePending: true,
   });
 
-  const run = await runHousekeeping(ctx.deps, { workerId: 'worker' });
+  const run = await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   const session = await ctx.deps.store.session(defaultWorkspaceId, ctx.planner.id);
 
@@ -182,7 +182,7 @@ test('a session that still owes a platform stop keeps the closed group', async (
     platformStopPending: true,
   });
 
-  const run = await runHousekeeping(ctx.deps, { workerId: 'worker' });
+  const run = await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   const session = await ctx.deps.store.session(defaultWorkspaceId, ctx.planner.id);
 
@@ -199,7 +199,7 @@ test('a failed start that owes nothing is removed with its closed group', async 
     life: 'start_failed',
   });
 
-  await runHousekeeping(ctx.deps, { workerId: 'worker' });
+  await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   expect(await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id)).toBeNull();
 });
@@ -243,7 +243,9 @@ test('a housekeeping write under an old lock id removes nothing', async () => {
   await insertClearedAlert(ctx, ctx.opened.group.id, 'stale-alert', 'stale-delivery');
   stealLockAfterListing(ctx);
 
-  await expect(runHousekeeping(ctx.deps, { workerId: 'worker' })).rejects.toMatchObject({
+  await expect(
+    runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' })
+  ).rejects.toMatchObject({
     code: 'conflict',
   });
   expect(await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id)).not.toBeNull();
@@ -264,7 +266,7 @@ test('older blocked groups do not spend the deadline ahead of a later eligible g
   });
   advanceClockWhenKept(ctx);
 
-  const run = await runHousekeeping(ctx.deps, { workerId: 'worker' });
+  const run = await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   expect(run.ran).toBe(true);
   expect(await ctx.deps.store.group(defaultWorkspaceId, later.group.id)).toBeNull();
@@ -283,7 +285,7 @@ test('housekeeping stops at its deadline and leaves the next group', async () =>
   });
   advanceClockAfterFirstRemoval(ctx);
 
-  const run = await runHousekeeping(ctx.deps, { workerId: 'worker' });
+  const run = await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   expect(run.ran).toBe(true);
   expect(await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id)).toBeNull();
@@ -296,20 +298,20 @@ test('housekeeping runs at most once every 24 hours', async () => {
 
   await closeForRetention(ctx, ctx.opened.group.id, { ageMs: closedGroupRetentionMs - hour });
 
-  const first = await runHousekeeping(ctx.deps, { workerId: 'worker' });
+  const first = await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   expect(first.ran).toBe(true);
   expect(await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id)).not.toBeNull();
 
   ctx.deps.clock.advance(jobLockMs + 1);
 
-  const second = await runHousekeeping(ctx.deps, { workerId: 'worker' });
+  const second = await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   expect(second).toEqual({ ran: false, lockId: null });
 
   ctx.deps.clock.advance(housekeepingIntervalMs);
 
-  const third = await runHousekeeping(ctx.deps, { workerId: 'worker' });
+  const third = await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   expect(third.ran).toBe(true);
   expect(await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id)).toBeNull();
@@ -321,12 +323,12 @@ test('housekeeping removes a group after the retention it was given', async () =
 
   ctx.deps.closedGroupRetentionMs = tenDays;
   await closeForRetention(ctx, ctx.opened.group.id, { ageMs: tenDays - 1 });
-  await runHousekeeping(ctx.deps, { workerId: 'worker' });
+  await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   expect(await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id)).not.toBeNull();
 
   ctx.deps.clock.advance(housekeepingIntervalMs);
-  await runHousekeeping(ctx.deps, { workerId: 'worker' });
+  await runHousekeeping(ctx.deps, ctx.platforms, { workerId: 'worker' });
 
   expect(await ctx.deps.store.group(defaultWorkspaceId, ctx.opened.group.id)).toBeNull();
 });

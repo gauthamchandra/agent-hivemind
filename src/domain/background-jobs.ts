@@ -1,4 +1,4 @@
-import type { AlertId, GroupId, SessionId, WorkspaceId } from '@/domain/ids.ts';
+import type { AlertId, ConnectionId, GroupId, SessionId, WorkspaceId } from '@/domain/ids.ts';
 import type { WaitRecord } from '@/domain/message.ts';
 import type {
   Group,
@@ -23,8 +23,8 @@ export const reaperDeadlineMs = 10 * 60 * 1000;
 /** How often housekeeping may start. */
 export const housekeepingIntervalMs = 24 * 60 * 60 * 1000;
 /**
- * A run stops between groups once this passes.
- * It is the job lock. Each group's write holds that lock id.
+ * A run stops between groups, and then between connections, once this passes.
+ * It is the job lock. Each group's write, and each probe result, holds that lock id.
  */
 export const housekeepingDeadlineMs = jobLockMs;
 /**
@@ -102,6 +102,7 @@ export const alertRules = [
   'orphan_platform_session_ended',
   'instruction_relayed',
   'spend_unknown',
+  'connection_failing',
 ] as const;
 
 export type AlertRule = (typeof alertRules)[number];
@@ -202,6 +203,13 @@ export type SessionJobState = {
   lastAttemptAt: string | null;
   usageGrewAt: string | null;
   orphanEnded: boolean;
+};
+
+/** What housekeeping remembers about one connection between probes. */
+export type ConnectionJobState = {
+  connectionId: ConnectionId;
+  workspaceId: WorkspaceId;
+  failing: boolean;
 };
 
 export type PlannedAction = {

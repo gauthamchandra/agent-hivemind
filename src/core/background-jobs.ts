@@ -19,7 +19,7 @@ export async function runDueJobs(
   const runs = await Promise.allSettled([
     runUsagePoll(deps, platforms, options),
     runReaper(deps, platforms, options),
-    runHousekeeping(deps, options),
+    runHousekeeping(deps, platforms, options),
   ]);
   const failures = runs.flatMap(run => (run.status === 'rejected' ? [run.reason] : []));
 
