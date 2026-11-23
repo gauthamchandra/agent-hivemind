@@ -10,16 +10,20 @@ import { openGroup } from '@/core/session-open.ts';
 import { StoppedProcess } from '@/core/session-types.ts';
 import { runUsagePoll } from '@/core/usage-poll.ts';
 import {
+  closedGroupRetentionMs,
   emptySessionJobState,
+  housekeepingIntervalMs,
+  jobLockMs,
   reaperIntervalMs,
   usagePollIntervalMs,
 } from '@/domain/background-jobs.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import { createIds, defaultWorkspaceId } from '@/domain/ids.ts';
+import { formatTime } from '@/domain/time.ts';
 import { createSimulatedPlatform } from '@/platform/simulated/adapter.ts';
 import type { Platforms } from '@/ports/platform.ts';
 import { systemRandom } from '@/ports/random.ts';
-import { openPostgresStore } from '@/storage/postgres/postgres.ts';
+import { openPostgresStore, type PostgresStore } from '@/storage/postgres/postgres.ts';
 import { requirePresent } from '@/testing/assertions.ts';
 import { manualClock } from '@/testing/clock.ts';
 import { testResponseKey } from '@/testing/deps.ts';
@@ -193,6 +197,88 @@ test.skipIf(databaseUrl === undefined)(
   }
 );
 
+test.skipIf(databaseUrl === undefined)(
+  'retention waits for the session lock and keeps a group whose final reading becomes pending',
+  async () => {
+    const ctx = await boot(databaseUrl ?? '');
+    const now = formatTime(ctx.clock.now());
+    const store = ctx.depsA.store as PostgresStore;
+
+    await store.exec(
+      `UPDATE sessions
+       SET life = 'ended', final_usage_pending = false, platform_stop_pending = false, token_hash = NULL
+       WHERE id = '${ctx.plannerId}'`
+    );
+    await store.exec(
+      `UPDATE groups SET status = 'closed', closed_at = '2000-01-01T00:00:00.000Z' WHERE id = '${ctx.groupId}'`
+    );
+
+    const lockId = await ctx.depsA.store.transact(tx =>
+      tx.takeJobLock({
+        job: 'housekeeping',
+        lockedBy: ctx.workerA,
+        now,
+        expiresAt: formatTime(new Date(ctx.clock.now().getTime() + jobLockMs)),
+        dueAt: formatTime(new Date(ctx.clock.now().getTime() - housekeepingIntervalMs)),
+      })
+    );
+
+    expect(lockId).toBe(1);
+
+    let release = () => {};
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    let locked = false;
+    const holder = ctx.depsB.store.transact(async tx => {
+      const session = await tx.lockSession(defaultWorkspaceId, ctx.plannerId);
+
+      if (session === null) throw new Error('the planner session is missing');
+
+      await tx.updateSession({ ...session, final_usage_pending: true });
+      locked = true;
+      await gate;
+    });
+    let outcome = 'not-started';
+    let removal: Promise<void> = Promise.resolve();
+
+    runAfterTest(async () => {
+      release();
+      await Promise.allSettled([holder, removal]);
+    });
+    await waitUntil(() => (locked ? true : null), 'the session update to hold its lock');
+
+    removal = ctx.depsA.store
+      .transact(tx =>
+        tx.removeClosedGroup({
+          groupId: ctx.groupId,
+          lockId: lockId ?? 0,
+          now,
+          closedBefore: now,
+        })
+      )
+      .then(result => {
+        outcome = result;
+      });
+
+    await waitUntil(
+      () =>
+        ctx.blockedQueries().then(count => (count > 0 && outcome === 'not-started' ? true : null)),
+      'retention to wait for the session lock'
+    );
+    release();
+    await holder;
+    await removal;
+
+    const group = await ctx.depsA.store.group(defaultWorkspaceId, ctx.groupId);
+    const session = await ctx.depsA.store.session(defaultWorkspaceId, ctx.plannerId);
+
+    expect(outcome).toBe('kept');
+    expect(group?.status).toBe('closed');
+    expect(session?.final_usage_pending).toBe(true);
+  }
+);
+
 async function boot(url: string) {
   const setup = openPostgresStore(url);
 
@@ -210,6 +296,7 @@ async function boot(url: string) {
     random: systemRandom,
     ids: createIds(clock, systemRandom),
     responseKey: testResponseKey,
+    closedGroupRetentionMs,
   };
   const installation = await openInstallation(deps);
   const secret = installation.bootstrapSecret;

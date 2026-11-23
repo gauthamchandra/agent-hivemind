@@ -222,14 +222,15 @@ PORT=8787 bun run start
 
 The service reads these variables:
 
-| Variable                  | What it does                                                                                                   |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `HIVEMIND_RESPONSE_KEY`   | Required: the service will not start without it. Generate it once and reuse it.                                |
-| `PORT`                    | Listen port. Unset uses an ephemeral port.                                                                     |
-| `HIVEMIND_DATA`           | Directory for the Postgres data. Defaults to `.hivemind`.                                                      |
-| `HIVEMIND_POSTGRES_URL`   | Connection string for the PostgreSQL spawn-gate test. The service does not read it.                            |
-| `HIVEMIND_WEBHOOK_URL`    | Optional. Where alert notifications are sent. See [Receive alert notifications](#receive-alert-notifications). |
-| `HIVEMIND_WEBHOOK_SECRET` | Required when the webhook address is set. Signs each notification.                                             |
+| Variable                               | What it does                                                                                                   |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `HIVEMIND_RESPONSE_KEY`                | Required: the service will not start without it. Generate it once and reuse it.                                |
+| `PORT`                                 | Listen port. Unset uses an ephemeral port.                                                                     |
+| `HIVEMIND_DATA`                        | Directory for the Postgres data. Defaults to `.hivemind`.                                                      |
+| `HIVEMIND_CLOSED_GROUP_RETENTION_DAYS` | Days a closed group is kept. Unset is 90. `--closed-group-retention-days` overrides it.                        |
+| `HIVEMIND_POSTGRES_URL`                | Connection string for the PostgreSQL spawn-gate test. The service does not read it.                            |
+| `HIVEMIND_WEBHOOK_URL`                 | Optional. Where alert notifications are sent. See [Receive alert notifications](#receive-alert-notifications). |
+| `HIVEMIND_WEBHOOK_SECRET`              | Required when the webhook address is set. Signs each notification.                                             |
 
 In a second terminal, with the bootstrap key from the first:
 

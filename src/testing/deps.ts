@@ -1,5 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { ServiceDeps } from '@/core/deps.ts';
+import { closedGroupRetentionMs } from '@/domain/background-jobs.ts';
 import { createIds } from '@/domain/ids.ts';
 import { type RandomSource, systemRandom } from '@/ports/random.ts';
 import { openPgliteStore } from '@/storage/postgres/store.ts';
@@ -29,6 +30,7 @@ export function createTestDeps(
     random,
     ids: createIds(clock, random),
     responseKey: testResponseKey,
+    closedGroupRetentionMs,
   };
 }
 

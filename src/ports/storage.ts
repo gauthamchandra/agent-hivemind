@@ -243,6 +243,18 @@ export interface UnitOfWork {
   /** Close an outstanding delivery. `sent` also records when the alert was last notified. */
   finishAlertDelivery(id: string, state: 'sent' | 'failed' | 'expired', now: string): Promise<void>;
   correctCounters(): Promise<string[]>;
+  /** Closed groups whose `closed_at` is at or before this instant, oldest first. */
+  groupsClosedBefore(closedBefore: string): Promise<GroupId[]>;
+  /**
+   * Remove one closed group, its history, and the job rows that name it.
+   * The session rows are locked before the decision, and the write holds `lockId`.
+   */
+  removeClosedGroup(input: {
+    groupId: GroupId;
+    lockId: number;
+    now: string;
+    closedBefore: string;
+  }): Promise<'removed' | 'kept' | 'missing' | 'stale'>;
 }
 
 export interface Store {

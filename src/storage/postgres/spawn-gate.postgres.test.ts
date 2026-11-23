@@ -9,6 +9,7 @@ import { reportTransition } from '@/core/report-records.ts';
 import { openGroup } from '@/core/session-open.ts';
 import { startSession } from '@/core/session-start.ts';
 import { createChildTask } from '@/core/task-records.ts';
+import { closedGroupRetentionMs } from '@/domain/background-jobs.ts';
 import { HivemindError } from '@/domain/errors.ts';
 import { createIds, defaultWorkspaceId } from '@/domain/ids.ts';
 import { selfHostedGroupCaps } from '@/domain/model.ts';
@@ -38,6 +39,7 @@ test.skipIf(databaseUrl === undefined)(
       random: systemRandom,
       ids: createIds(clock, systemRandom),
       responseKey: testResponseKey,
+      closedGroupRetentionMs,
     };
     const installation = await openInstallation(deps);
     const secret = installation.bootstrapSecret;

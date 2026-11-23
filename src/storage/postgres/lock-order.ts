@@ -122,6 +122,8 @@ export function inLockOrder(work: UnitOfWork): UnitOfWork {
       return corrected;
     },
 
+    ...closedGroupRemoval(work, held, hold, refuseIfBeforeDeepest),
+
     async openChildren(workspaceId, groupId, parentId) {
       const children = await work.openChildren(workspaceId, groupId, parentId);
 
@@ -139,6 +141,32 @@ export function inLockOrder(work: UnitOfWork): UnitOfWork {
         () => work.lockSession(workspaceId, id),
         () => 'session'
       );
+    },
+  };
+}
+
+function closedGroupRemoval(
+  work: UnitOfWork,
+  held: Set<string>,
+  hold: (key: string, level: LockLevel) => void,
+  refuseIfBeforeDeepest: (level: LockLevel) => void
+): Pick<UnitOfWork, 'removeClosedGroup'> {
+  return {
+    async removeClosedGroup(input) {
+      refuseIfBeforeDeepest('job lock');
+
+      const outcome = await work.removeClosedGroup(input);
+
+      if (outcome === 'stale') return outcome;
+
+      if (!held.has('job_lock:housekeeping')) hold('job_lock:housekeeping', 'job lock');
+      if (outcome === 'missing') return outcome;
+
+      hold(`group:${input.groupId}`, 'group');
+      hold(`tasks-of:${input.groupId}`, 'child task');
+      hold(`sessions-of:${input.groupId}`, 'session');
+
+      return outcome;
     },
   };
 }

@@ -73,18 +73,18 @@ low-risk pull requests and gates higher-risk ones for a person. See
 
 Code is split into layers, and Biome fails the build when a layer imports one it must not.
 
-| Layer             | Responsibility                                                                         | May depend on                              |
-| ----------------- | -------------------------------------------------------------------------------------- | ------------------------------------------ |
-| domain            | Types, ids, errors, and the task transition tables with the function that applies them | Nothing else                               |
-| policy            | The permission table: which role may take which action, where                          | domain                                     |
-| ports             | The interfaces the services need: storage, the platform adapter and the notifier       | domain                                     |
-| core              | The services, including the usage poll and the reaper, which run under the job lock    | domain, policy, ports                      |
-| storage           | The Postgres store and its migrations                                                  | domain, ports                              |
-| platform adapters | One adapter per agent platform. Only a simulated one exists                            | domain, ports                              |
-| notify            | Sends an alert notification to a webhook                                               | domain, ports                              |
-| http              | Routes, credential checks, error mapping                                               | domain, ports, core                        |
-| cli               | The `hivemind` command                                                                 | Nothing in the service. It talks over HTTP |
-| conformance       | A suite that checks an adapter against the platform contract                           | domain, ports                              |
+| Layer             | Responsibility                                                                                     | May depend on                              |
+| ----------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| domain            | Types, ids, errors, and the task transition tables with the function that applies them             | Nothing else                               |
+| policy            | The permission table: which role may take which action, where                                      | domain                                     |
+| ports             | The interfaces the services need: storage, the platform adapter and the notifier                   | domain                                     |
+| core              | The services, including the usage poll, the reaper, and housekeeping, which run under the job lock | domain, policy, ports                      |
+| storage           | The Postgres store and its migrations                                                              | domain, ports                              |
+| platform adapters | One adapter per agent platform. Only a simulated one exists                                        | domain, ports                              |
+| notify            | Sends an alert notification to a webhook                                                           | domain, ports                              |
+| http              | Routes, credential checks, error mapping                                                           | domain, ports, core                        |
+| cli               | The `hivemind` command                                                                             | Nothing in the service. It talks over HTTP |
+| conformance       | A suite that checks an adapter against the platform contract                                       | domain, ports                              |
 
 ```mermaid
 flowchart LR
@@ -282,7 +282,8 @@ The database enforces what code must never break:
 - One root task per group.
 - At most one `starting`, `live` or `released` session per task and role, except for
   challengers.
-- Task history is append-only: a trigger rejects every update and delete.
+- Task history is append-only: a trigger rejects every update, and every delete except the one
+  in the transaction that removes a closed group.
 - An alert has at most one outstanding notification: a unique index on `alert_deliveries` allows one
   `sending` or `failed` row per alert.
 - A closed task cannot change state: a trigger rejects it.
@@ -390,6 +391,14 @@ key-value pairs. Its keys, signature and headers are in the
 [README](../README.md#receive-alert-notifications). The reason of an escalation is free text that
 the session wrote and is redacted only for this service's own token formats, so treat the webhook
 as an internal channel.
+
+Housekeeping runs every 24 hours under its own job lock. A closed group is removed 90 days after
+it closed, or after the retention the process was started with, and only when no session is still
+starting, live, or released, and none still owes a
+final reading or a platform stop. Its tasks, history, messages, alerts, deliveries, and planned
+actions go in that same transaction, cleared alerts included. A run stops between groups once four
+minutes have passed. Each group's write holds the lock id.
+See [ADR 0007](adr/0007-a-job-lock-keeps-each-background-job-to-one-process.md).
 
 ## Surviving failure
 
